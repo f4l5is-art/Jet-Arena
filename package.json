@@ -1,0 +1,20 @@
+{
+  "name": "jet-arena",
+  "version": "0.1.0",
+  "description": "Lightweight 3D jetpack arena shooter. Solo, online lobbies, and experimental offline hotspot multiplayer.",
+  "type": "module",
+  "scripts": {
+    "build": "node build.js",
+    "start": "node server/server.js",
+    "test": "node test/sim.test.js && node test/sdp.test.js && node test/server.test.js"
+  },
+  "dependencies": {
+    "ws": "^8.18.0"
+  },
+  "devDependencies": {
+    "esbuild": "^0.24.0",
+    "jsqr": "^1.4.0",
+    "qrcode-generator": "^1.4.4",
+    "three": "^0.170.0"
+  }
+}
