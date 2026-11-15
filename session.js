@@ -1,7 +1,7 @@
 // Sessions give the renderer/HUD one uniform `view`, whether we are playing solo,
 // hosting (the host runs the simulation) or joined to someone else's game.
 import { Game } from './sim.js';
-import { TICK, newBody, moveStep } from './core.js';
+import { TICK, newBody, moveStep, adsSpeed } from './core.js';
 
 const BOT_NAMES = ['Rex', 'Nova', 'Bolt', 'Kira', 'Zed', 'Mako', 'Pixel', 'Jinx', 'Echo', 'Dash'];
 const lerp = (a, b, t) => a + (b - a) * t;
@@ -10,7 +10,7 @@ const lerpAngle = (a, b, t) => { let d = b - a; while (d > Math.PI) d -= 2 * Mat
 function parseRow(r) {
   return {
     id: r[0], x: r[1], y: r[2], z: r[3], yaw: r[4], pitch: r[5], hp: r[6], weapon: r[7], alive: !!r[8], thr: !!r[9],
-    ammo: r[10], fuel: r[11], kills: r[12], deaths: r[13], reload: r[14], vx: r[15], vy: r[16], vz: r[17],
+    ammo: r[10], fuel: r[11], kills: r[12], deaths: r[13], reload: r[14], vx: r[15], vy: r[16], vz: r[17], gr: !!r[18], bloom: r[19] || 0,
   };
 }
 
@@ -95,7 +95,7 @@ export class HostSession extends Base {
     const v = this.view;
     v.players = [];
     for (const p of g.players.values()) {
-      const o = { id: p.id, x: p.body.x, y: p.body.y, z: p.body.z, yaw: p.yaw, pitch: p.pitch, hp: Math.ceil(p.hp), weapon: p.weapon, alive: p.alive, thr: p.body.thrusting, kills: p.kills, deaths: p.deaths, ammo: p.mags[p.weapon], fuel: Math.round(p.body.fuel), reload: p.reloadLeft };
+      const o = { id: p.id, x: p.body.x, y: p.body.y, z: p.body.z, yaw: p.yaw, pitch: p.pitch, hp: Math.ceil(p.hp), weapon: p.weapon, alive: p.alive, thr: p.body.thrusting, kills: p.kills, deaths: p.deaths, ammo: p.mags[p.weapon], fuel: Math.round(p.body.fuel), reload: p.reloadLeft, vx: p.body.vx, vy: p.body.vy, vz: p.body.vz, gr: p.body.ground, bloom: p.bloom };
       v.players.push(this.decorate(o));
       if (p.id === this.myId) v.me = o;
     }
@@ -117,7 +117,7 @@ export class ClientSession extends Base {
     this.pred = newBody();
     this.predAlive = false;
     this.input = { mx: 0, mz: 0, yaw: 0, pitch: 0, jet: false, fire: false, rl: false, sw: -1 };
-    this.latched = { rl: false, sw: -1 };
+    this.latched = { rl: false, sw: -1, jump: false };
     this.acc = 0;
     this.sendT = 0; this.pingT = 0; this.rtt = 0.05;
     this.last = null; // newest snapshot meta
@@ -156,8 +156,10 @@ export class ClientSession extends Base {
   }
 
   setLocalInput(i) {
+    i.spd = adsSpeed(this.view.me ? this.view.me.weapon : 1, i.ads);
     this.input = i;
     if (i.rl) this.latched.rl = true;
+    if (i.jump) this.latched.jump = true;
     if (i.sw >= 0) this.latched.sw = i.sw;
   }
 
@@ -169,8 +171,8 @@ export class ClientSession extends Base {
     this.sendT += dt; this.pingT += dt;
     if (this.sendT >= 1 / 30) {
       this.sendT = 0;
-      this.net.send({ k: 'in', i: { ...this.input, rl: this.latched.rl, sw: this.latched.sw } });
-      this.latched.rl = false; this.latched.sw = -1;
+      this.net.send({ k: 'in', i: { ...this.input, rl: this.latched.rl, sw: this.latched.sw, jump: this.latched.jump } });
+      this.latched.rl = false; this.latched.sw = -1; this.latched.jump = false;
     }
     if (this.pingT >= 1) { this.pingT = 0; this.net.send({ k: 'ping', t: performance.now() }); }
 
@@ -188,7 +190,7 @@ export class ClientSession extends Base {
       const pa = a.rows.get(id) || nb, pb = b.rows.get(id) || nb;
       const o = { ...nb, x: lerp(pa.x, pb.x, t), y: lerp(pa.y, pb.y, t), z: lerp(pa.z, pb.z, t), yaw: lerpAngle(pa.yaw, pb.yaw, t), pitch: lerp(pa.pitch, pb.pitch, t) };
       if (id === this.myId) {
-        if (nb.alive) { o.x = this.pred.x; o.y = this.pred.y; o.z = this.pred.z; o.thr = this.input.jet && this.pred.fuel > 0; }
+        if (nb.alive) { o.x = this.pred.x; o.y = this.pred.y; o.z = this.pred.z; o.thr = this.input.jet && this.pred.fuel > 0; o.vx = this.pred.vx; o.vy = this.pred.vy; o.vz = this.pred.vz; o.gr = this.pred.ground; }
         o.yaw = this.input.yaw; o.pitch = this.input.pitch;
         v.me = o;
       }

@@ -7,7 +7,9 @@ export class Input {
     this.yaw = 0; this.pitch = 0;
     this.mx = 0; this.mz = 0;
     this.jet = false; this.fire = false;
-    this.rl = false; this.sw = -1;
+    this.rl = false; this.sw = -1; this.jumpFlag = false;
+    this.adsToggle = false; this.adsHold = false; this.zoomLevel = 0; this.zoomStep = false;
+    this.zoomMul = 1; // look speed scales down while zoomed so fine aim stays easy
     this.sens = 1;
     this.keys = new Set();
     this.touch = false;
@@ -71,6 +73,11 @@ export class Input {
     };
     hold('btn-fire', this.btn.fire, 'fire');
     hold('btn-jet', this.btn.jet, 'jet');
+    $('btn-jump').addEventListener('pointerdown', (e) => { e.preventDefault(); this.touch = true; this.jumpFlag = true; $('btn-jump').classList.add('down'); });
+    $('btn-jump').addEventListener('pointerup', () => $('btn-jump').classList.remove('down'));
+    $('btn-jump').addEventListener('pointercancel', () => $('btn-jump').classList.remove('down'));
+    $('btn-scope').addEventListener('pointerdown', (e) => { e.preventDefault(); this.touch = true; this.adsToggle = !this.adsToggle; });
+    $('btn-zoom').addEventListener('pointerdown', (e) => { e.preventDefault(); this.zoomStep = true; });
     $('btn-reload').addEventListener('pointerdown', (e) => { e.preventDefault(); this.rl = true; });
     $('btn-weapon').addEventListener('pointerdown', (e) => { e.preventDefault(); this.cycle = true; });
 
@@ -82,7 +89,7 @@ export class Input {
       if (k >= '1' && k <= '4') this.sw = Number(k) - 1;
       if (k === 'r') this.rl = true;
       if (k === 'q') this.cycle = true;
-      if (k === ' ') e.preventDefault();
+      if (k === ' ') { e.preventDefault(); if (!e.repeat) this.jumpFlag = true; } // tap = jump, hold = jetpack
     });
     addEventListener('keyup', (e) => this.keys.delete(e.key.toLowerCase()));
     const canvas = $('game');
@@ -90,19 +97,22 @@ export class Input {
       if (!this.enabled || this.touch) return;
       if (document.pointerLockElement !== canvas) { canvas.requestPointerLock?.(); return; }
       if (e.button === 0) this.mouseFire = true;
+      if (e.button === 2) this.adsHold = true;
     });
-    addEventListener('mouseup', () => { this.mouseFire = false; });
+    addEventListener('mouseup', (e) => { if (e.button === 2) this.adsHold = false; else this.mouseFire = false; });
+    canvas.addEventListener('contextmenu', (e) => e.preventDefault());
     addEventListener('mousemove', (e) => {
       if (!this.enabled || document.pointerLockElement !== canvas) return;
       this.turn(e.movementX * 0.0022, e.movementY * 0.0022);
     });
-    addEventListener('wheel', (e) => { if (this.enabled) { this.sw = e.deltaY > 0 ? -2 : -3; } }, { passive: true });
+    addEventListener('wheel', (e) => { if (!this.enabled) return; if (this.scopedNow) this.zoomStep = true; else this.sw = e.deltaY > 0 ? -2 : -3; }, { passive: true });
     addEventListener('blur', () => { this.keys.clear(); this.mouseFire = false; });
   }
 
   turn(dx, dy) {
-    this.yaw -= dx * this.sens;
-    this.pitch = clamp(this.pitch - dy * this.sens, -1.2, 1.2);
+    const k = this.sens * this.zoomMul;
+    this.yaw -= dx * k;
+    this.pitch = clamp(this.pitch - dy * k, -1.2, 1.2);
   }
 
   // Snapshot for the simulation. `cur` is the current weapon index (for cycling).
@@ -119,14 +129,14 @@ export class Input {
     else if (sw === -3) sw = (cur + count - 1) % count;
     const out = {
       mx: clamp(mx, -1, 1), mz: clamp(mz, -1, 1), yaw: this.yaw, pitch: this.pitch,
-      jet: this.jet || k.has(' ') || k.has('shift'), fire: this.fire || !!this.mouseFire, rl: this.rl, sw,
+      ads: this.adsToggle || this.adsHold, jet: this.jet || k.has(' ') || k.has('shift'), fire: this.fire || !!this.mouseFire, rl: this.rl, sw, jump: this.jumpFlag,
     };
-    this.rl = false; this.sw = -1; this.cycle = false;
+    this.rl = false; this.sw = -1; this.cycle = false; this.jumpFlag = false;
     return out;
   }
 
   reset() {
-    this.mx = this.mz = 0; this.jet = this.fire = false; this.mouseFire = false;
+    this.mx = this.mz = 0; this.jet = this.fire = false; this.mouseFire = false; this.adsHold = false; this.adsToggle = false;
     this.stick.id = -1; this.look.id = -1; this.keys.clear();
   }
 }

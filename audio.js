@@ -44,5 +44,7 @@ export const sfx = {
   kill() { tone(520, 0.1, 'triangle', 0.14); setTimeout(() => tone(780, 0.14, 'triangle', 0.14), 90); },
   die() { tone(300, 0.5, 'sawtooth', 0.14, -240); },
   reload() { tone(180, 0.06, 'square', 0.08); setTimeout(() => tone(260, 0.06, 'square', 0.08), 350); },
+  land(s = 1) { noise(0.12, 0.16 * s, 500); },
+  step() { noise(0.04, 0.05, 700); },
   win() { [523, 659, 784, 1046].forEach((f, i) => setTimeout(() => tone(f, 0.2, 'triangle', 0.15), i * 130)); },
 };

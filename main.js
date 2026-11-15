@@ -1,4 +1,4 @@
-import { WEAPONS } from './core.js';
+import { WEAPONS, SNIPER, BASE_FOV, aimedEnemy, spreadOf, adsFov } from './core.js';
 import { Renderer } from './render.js';
 import { Input } from './input.js';
 import { HostSession, ClientSession } from './session.js';
@@ -13,6 +13,8 @@ const store = {
 };
 
 const renderer = new Renderer($('game'));
+renderer.onLand = (s) => sfx.land(s);
+renderer.onStep = () => sfx.step();
 const input = new Input();
 let session = null;
 let playing = false;
@@ -38,14 +40,16 @@ $('qual').value = store.get('qual', defQuality);
 $('sens').value = store.get('sens', '1');
 $('cam3').value = store.get('cam3', '1');
 $('snd').value = store.get('snd', '1');
+$('auto').value = store.get('auto', '1');
 function applySettings() {
   renderer.setQuality(Number($('qual').value));
   input.sens = Number($('sens').value);
   renderer.thirdPerson = $('cam3').value === '1';
   setSound($('snd').value === '1');
-  for (const k of ['qual', 'sens', 'cam3', 'snd']) store.set(k, $(k).value);
+  for (const k of ['qual', 'sens', 'cam3', 'snd', 'auto']) store.set(k, $(k).value);
+  document.body.classList.toggle('manualfire', $('auto').value === '0'); // no auto-fire: bring back the FIRE button
 }
-for (const k of ['qual', 'sens', 'cam3', 'snd']) $(k).addEventListener('input', applySettings);
+for (const k of ['qual', 'sens', 'cam3', 'snd', 'auto']) $(k).addEventListener('input', applySettings);
 applySettings();
 const myName = () => {
   const n = $('name').value.trim() || 'Player';
@@ -93,7 +97,7 @@ function leave() {
   stopScan();
   session = null; playing = false; paused = false;
   input.enabled = false; input.reset();
-  document.body.classList.remove('playing');
+  document.body.classList.remove('playing', 'scoped');
   $('hud').classList.remove('on');
   if (document.fullscreenElement) document.exitFullscreen?.().catch(() => {});
   show('s-menu');
@@ -118,6 +122,12 @@ function setPause(v) {
   if (v) { input.reset(); show('s-pause'); $('p-invite').style.display = hotspotNet ? 'block' : 'none'; } else hideScreens();
 }
 $('pause').addEventListener('pointerdown', (e) => { e.preventDefault(); setPause(true); });
+function toggleCamera() {
+  $('cam3').value = renderer.thirdPerson ? '0' : '1';
+  applySettings();
+}
+$('btn-cam').addEventListener('pointerdown', (e) => { e.preventDefault(); toggleCamera(); });
+addEventListener('keydown', (e) => { if (e.key.toLowerCase() === 'v' && playing && !paused) toggleCamera(); });
 $('p-resume').onclick = () => setPause(false);
 addEventListener('keydown', (e) => { if (e.key === 'Escape' && playing && current !== 's-end') setPause(!paused); });
 document.addEventListener('visibilitychange', () => { if (document.hidden && playing && !paused) setPause(true); });
@@ -294,12 +304,14 @@ function onEvent(e) {
   const v = session.view;
   if (e[0] === 's') {
     renderer.tracer(e[2], e[3], e[4], e[5], e[6], e[7]);
+    renderer.shot(e[1]);
     const sh = v.players.find((p) => p.id === e[1]);
     const near = e[1] === me;
     const d = v.me ? Math.hypot(e[2] - v.me.x, e[4] - v.me.z) : 99;
     if (near || d < 35) sfx.shot(sh ? sh.weapon : 0, near || d < 12);
     if (near) renderer.kick = 0.012;
   } else if (e[0] === 'h') {
+    renderer.hit(e[1]);
     if (e[2] === me) { flash($('hitm'), e[4] ? 'head' : ''); (e[4] ? sfx.headshot : sfx.hit)(); }
     if (e[1] === me) { flash($('vig')); sfx.hurt(); renderer.addShake(0.08); }
   } else if (e[0] === 'k') {
@@ -381,14 +393,55 @@ function frame(now) {
   if (!frozen) {
     const me = session.view.me;
     const cur = me ? me.weapon : 1;
-    if (playing) session.setLocalInput(input.read(cur, WEAPONS.length));
-    else session.setLocalInput({ mx: 0, mz: 0, yaw: input.yaw, pitch: input.pitch, jet: false, fire: false });
+    if (playing) {
+      if (me && !me.alive) input.adsToggle = false; // dying drops your scope
+      const inp = input.read(cur, WEAPONS.length);
+      inp.fp = !renderer.thirdPerson; // first-person: bullets leave the eye, so aim must match
+      const w = WEAPONS[cur], ads = !!inp.ads && !!me && me.alive;
+      const scoped = ads && cur === SNIPER; // scoped sniper = true first person
+      if (input.zoomStep) { input.zoomStep = false; if (scoped) input.zoomLevel = (input.zoomLevel + 1) % w.zoom.length; }
+      aimView.fov = ads ? adsFov(cur, input.zoomLevel) : BASE_FOV;
+      aimView.fp = scoped; aimView.ads = ads;
+      // Look speed follows the zoom, so a 8x scope isn't twitchy.
+      input.zoomMul = Math.tan((renderer.fov * Math.PI) / 360) / Math.tan((BASE_FOV * Math.PI) / 360);
+      input.scopedNow = scoped;
+
+      let locked = false, spread = w.spread;
+      if (me && me.alive) {
+        spread = spreadOf(w, ads, Math.hypot(me.vx || 0, me.vz || 0), !me.gr || me.thr, me.bloom || 0);
+        locked = aimedEnemy(me, session.view.players, inp.yaw, inp.pitch, w.range, scoped || inp.fp);
+      }
+      // Auto-fire: shoot while the crosshair is on an enemy. The sniper only auto-fires when scoped AND
+      // steady, so the shot it takes is an accurate one. Pulsed so single-shot weapons keep firing.
+      if (!inp.fire && locked && me && me.alive && !session.view.over && $('auto').value === '1'
+          && (cur !== SNIPER || (scoped && spread < 0.005))) {
+        inp.fire = w.auto || Math.floor(now / 110) % 2 === 0;
+      }
+      session.setLocalInput(inp);
+      crosshair(spread, renderer.fov, locked, scoped, ads, cur);
+    }
+    else session.setLocalInput({ mx: 0, mz: 0, yaw: input.yaw, pitch: input.pitch, jet: false, fire: false, ads: false });
     session.update(dt);
   }
   if (playing) {
-    renderer.draw(dt, session.view, { yaw: input.yaw, pitch: input.pitch });
+    renderer.draw(dt, session.view, { yaw: input.yaw, pitch: input.pitch, fov: aimView.fov, fp: aimView.fp, scope: aimView.fp, ads: aimView.ads });
     hud(dt);
   }
+}
+const aimView = { fov: BASE_FOV, fp: false, ads: false };
+// The crosshair gap IS the weapon's current inaccuracy, converted to screen pixels, so what you see
+// is what the bullets will do. Red when the shot would hit someone.
+const crossEl = $('cross');
+function crosshair(spread, fov, locked, scoped, ads, weapon) {
+  const px = (Math.tan(spread) / Math.tan((fov * Math.PI) / 360)) * (innerHeight / 2);
+  crossEl.style.setProperty('--gap', Math.max(3, Math.min(140, px)).toFixed(1) + 'px');
+  crossEl.classList.toggle('lock', locked);
+  document.body.classList.toggle('scoped', scoped);
+  $('btn-scope').classList.toggle('on', ads);
+  const zoomBtn = $('btn-zoom');
+  zoomBtn.classList.toggle('show', scoped && WEAPONS[weapon].zoom.length > 1);
+  const label = WEAPONS[weapon].zoom[Math.min(input.zoomLevel, WEAPONS[weapon].zoom.length - 1)] + 'x';
+  if (zoomBtn.textContent !== label) { zoomBtn.textContent = label; $('zoomtag').textContent = label; }
 }
 requestAnimationFrame(frame);
 

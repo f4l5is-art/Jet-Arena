@@ -1,6 +1,6 @@
 // Host-authoritative game simulation: players, combat, scoring, respawn.
 import {
-  TICK, EYE, HP_MAX, MAP, WEAPONS, R, H, newBody, moveStep, rayAABB, rayWorld, aimDir,
+  TICK, EYE, HP_MAX, MAP, WEAPONS, SNIPER, newBody, moveStep, rayWorld, aimDir, aimShot, rayPlayers, spreadOf, adsSpeed,
 } from './core.js';
 import { botThink } from './bots.js';
 
@@ -32,8 +32,8 @@ export class Game {
       id, name: String(name || 'Player').slice(0, 14), bot, color: COLORS[(id - 1) % COLORS.length],
       body: newBody(), yaw: 0, pitch: 0, hp: HP_MAX, alive: false, respawnAt: 0,
       weapon: 1, mags: WEAPONS.map((w) => w.mag), cool: 0, reloadLeft: 0, lastHit: -99,
-      kills: 0, deaths: 0, wantFire: false, fireHeld: false,
-      inp: { mx: 0, mz: 0, yaw: 0, pitch: 0, jet: false, fire: false, rl: false, sw: -1 },
+      kills: 0, deaths: 0, wantFire: false, fireHeld: false, bloom: 0,
+      inp: { mx: 0, mz: 0, yaw: 0, pitch: 0, jet: false, fire: false, rl: false, sw: -1, jump: false, ads: false, spd: 1, fp: false },
       ai: bot ? { target: 0, think: 0, strafe: 1, strafeT: 0, stuckT: 0, lx: 0, lz: 0, wp: null } : null,
     };
     this.players.set(id, p);
@@ -54,8 +54,9 @@ export class Game {
     n.mx = c(i.mx, -1, 1); n.mz = c(i.mz, -1, 1);
     n.yaw = Number.isFinite(i.yaw) ? i.yaw : n.yaw;
     n.pitch = c(i.pitch, -1.4, 1.4);
-    n.jet = !!i.jet; n.fire = !!i.fire;
+    n.jet = !!i.jet; n.fire = !!i.fire; n.ads = !!i.ads; n.fp = !!i.fp;
     if (i.rl) n.rl = true; // one-shot flags stay latched until consumed
+    if (i.jump) n.jump = true;
     if (Number.isInteger(i.sw) && i.sw >= 0 && i.sw < WEAPONS.length) n.sw = i.sw;
   }
 
@@ -106,8 +107,11 @@ export class Game {
       }
       const i = p.inp;
       p.yaw = i.yaw; p.pitch = i.pitch;
+      i.spd = adsSpeed(p.weapon, i.ads); // aiming slows you down; decided here so clients can't cheat it
       moveStep(p.body, i, TICK);
-      if (i.sw >= 0 && i.sw !== p.weapon) { p.weapon = i.sw; p.reloadLeft = 0; p.cool = 0.25; }
+      i.jump = false;
+      p.bloom = Math.max(0, p.bloom - 0.045 * TICK); // rapid-fire inaccuracy settles back down
+      if (i.sw >= 0 && i.sw !== p.weapon) { p.weapon = i.sw; p.reloadLeft = 0; p.cool = 0.25; p.bloom = 0; }
       i.sw = -1;
       if (i.rl) { this.startReload(p); i.rl = false; }
       this.combat(p, i);
@@ -142,28 +146,40 @@ export class Game {
   }
 
   shoot(p, w) {
-    const ox = p.body.x, oy = p.body.y + EYE, oz = p.body.z;
+    const b = p.body;
+    const ex = b.x, ey = b.y + EYE, ez = b.z;
+    const list = [];
+    for (const o of this.players.values()) if (o.alive) list.push({ id: o.id, x: o.body.x, y: o.body.y, z: o.body.z, alive: true });
+    // Camera model: scoped sniper and bots aim straight from the eye; everyone else aims through the
+    // third-person camera (aimShot makes the bullet land exactly where the crosshair points).
+    const scoped = p.weapon === SNIPER && p.inp.ads;
+    const aim = aimShot({ id: p.id, x: b.x, y: b.y, z: b.z }, list, p.yaw, p.pitch, p.bot || scoped || p.inp.fp, w.range);
+    const base = aim.dir;
+    const yaw0 = Math.atan2(-base[0], -base[2]);
+    const pit0 = Math.asin(Math.max(-1, Math.min(1, base[1])));
+    const ads = p.inp.ads || (p.bot && p.weapon === SNIPER); // bots "scope" their sniper so it is usable
+    const spr = spreadOf(w, ads, Math.hypot(b.vx, b.vz), !b.ground, p.bloom);
+    const right = [Math.cos(p.yaw), -Math.sin(p.yaw)];
     for (let k = 0; k < w.pellets; k++) {
-      const d = aimDir(
-        p.yaw + (this.rng() - 0.5) * 2 * w.spread,
-        p.pitch + (this.rng() - 0.5) * 2 * w.spread,
-      );
-      const tWorld = rayWorld(ox, oy, oz, d[0], d[1], d[2], w.range);
-      let tHit = tWorld, victim = null;
-      for (const o of this.players.values()) {
-        if (o === p || !o.alive) continue;
-        const b = o.body;
-        const t = rayAABB(ox, oy, oz, d[0], d[1], d[2], b.x - R, b.y, b.z - R, b.x + R, b.y + H, b.z + R, tHit);
-        if (t >= 0 && t < tHit) { tHit = t; victim = o; }
-      }
+      const ang = this.rng() * Math.PI * 2, rad = spr * Math.sqrt(this.rng()); // even spread over a disc
+      const d = aimDir(yaw0 + Math.cos(ang) * rad, pit0 + Math.sin(ang) * rad);
+      const tWorld = rayWorld(ex, ey, ez, d[0], d[1], d[2], w.range);
+      const hit = rayPlayers(ex, ey, ez, d[0], d[1], d[2], tWorld, list, p.id);
+      const tHit = hit ? hit.t : tWorld;
       if (k < 3) {
-        this.events.push(['s', p.id, r2(ox), r2(oy), r2(oz), r2(ox + d[0] * tHit), r2(oy + d[1] * tHit), r2(oz + d[2] * tHit)]);
+        // the tracer visibly leaves the gun's muzzle, even though the bullet itself starts at the eye
+        const mx = ex + right[0] * 0.14 + d[0] * 0.9, my = ey - 0.27 + d[1] * 0.9, mz = ez + right[1] * 0.14 + d[2] * 0.9;
+        this.events.push(['s', p.id, r2(mx), r2(my), r2(mz), r2(ex + d[0] * tHit), r2(ey + d[1] * tHit), r2(ez + d[2] * tHit)]);
       }
-      if (victim) {
-        const head = oy + d[1] * tHit > victim.body.y + 1.35;
+      if (hit) {
+        const victim = this.players.get(hit.player.id), head = hit.head;
+        const push = w.dmg * 0.045; // heavier guns shove harder; a shotgun blast really moves you
+        victim.body.kx += d[0] * push; victim.body.kz += d[2] * push;
+        if (d[1] > 0) victim.body.vy += d[1] * push * 0.5;
         this.damage(victim, p, Math.round(w.dmg * (head ? 1.5 : 1)), head);
       }
     }
+    p.bloom = Math.min(w.bloomMax, p.bloom + w.bloomPer);
   }
 
   damage(v, by, dmg, head) {
@@ -199,7 +215,7 @@ export class Game {
         p.id, r2(p.body.x), r2(p.body.y), r2(p.body.z), r2(p.yaw), r2(p.pitch),
         Math.ceil(p.hp), p.weapon, p.alive ? 1 : 0, p.body.thrusting ? 1 : 0,
         p.mags[p.weapon], Math.round(p.body.fuel), p.kills, p.deaths, r2(p.reloadLeft),
-        r2(p.body.vx), r2(p.body.vy), r2(p.body.vz),
+        r2(p.body.vx), r2(p.body.vy), r2(p.body.vz), p.body.ground ? 1 : 0, Math.round(p.bloom * 10000) / 10000,
       ]),
     };
   }

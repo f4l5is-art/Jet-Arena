@@ -65,7 +65,7 @@ export function botThink(g, p) {
   if (a.stuckT >= 0.6) {
     const moved = Math.hypot(b.x - a.lx, b.z - a.lz);
     a.stuckT = 0; a.lx = b.x; a.lz = b.z;
-    if (moved < 0.6 && (i.mz !== 0 || i.mx !== 0)) { a.boost = 0.5; a.strafe = -a.strafe; a.wp = null; }
+    if (moved < 0.6 && (i.mz !== 0 || i.mx !== 0)) { a.boost = 0.5; a.strafe = -a.strafe; a.wp = null; i.jump = true; }
   }
   if (a.boost > 0) { a.boost -= TICK; jet = true; }
   if (b.fuel < 8) a.cool = true; else if (b.fuel > 45) a.cool = false;

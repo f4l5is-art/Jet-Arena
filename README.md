@@ -28,8 +28,8 @@ Phones only install web apps from **https**. Easiest free options:
 Open it once with internet so it caches for offline hotspot play.
 
 ## Controls
-Touch: left thumb = move, drag right side = look, FIRE, JET (hold to fly), reload, weapon switch.
-Desktop: WASD, mouse (click to capture), Space/Shift = jetpack, 1-4 or wheel = weapons, R = reload, Esc = pause.
+Touch: left thumb = move, drag right side = look (shooting is automatic when the crosshair is on an enemy; turn auto-fire off in Settings to get a FIRE button), JUMP (tap), JET (hold to fly), AIM (toggle scope/sights; the sniper gets a full scope and a 4x/8x button), reload, weapon switch.
+Desktop: WASD, mouse (click to capture), Space = jump (hold in the air to fly) or Shift = jetpack, 1-4 or wheel = weapons, R = reload, right mouse = aim (wheel = scope zoom), Esc = pause.
 
 ## Hotspot play: step by step
 1. Host phone: turn on mobile hotspot. Friends: join that Wi-Fi.
@@ -43,3 +43,16 @@ Limits: beta. The host's phone runs the match, so it should be a decent device; 
 `src/core.js` map + physics, `src/sim.js` host-authoritative game, `src/bots.js` AI, `src/net.js` + `server/server.js` networking,
 `src/sdpcodec.js` QR-sized WebRTC codes, `src/render.js` three.js, `src/input.js` controls, `src/main.js` menus/HUD.
 Tuning: weapons are in `WEAPONS` and the map is in `core.js`.
+
+## Deploy the lobby server on Render (free)
+1. Put this folder in a GitHub repository (the prebuilt `dist/` must be included).
+2. render.com > New + > **Blueprint** > pick the repo > Apply. (`render.yaml` does the rest.)
+3. Open the Render link: it serves the game too. In the game's **Online lobby** screen the server
+   address fills itself in. If you play from another host (e.g. Netlify), paste `wss://YOUR-NAME.onrender.com/ws` once.
+Free Render servers sleep after ~15 min idle: the first online connection after a break takes up to a minute.
+After changing code, run `npm run build` and commit `dist/` again.
+
+## Aiming model
+- The crosshair is exact: the third-person camera sits beside you, so the game aims the bullet from your eye at the spot the crosshair sees. It lands on the crosshair at any range.
+- The crosshair gap is the real spread. Moving, flying and rapid fire widen it; aiming (AIM) tightens it. Standing still and scoped, the sniper has zero spread.
+- Hit boxes match the avatar (separate smaller head box for 1.5x head shots).

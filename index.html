@@ -17,7 +17,7 @@
 *{box-sizing:border-box;-webkit-tap-highlight-color:transparent;-webkit-user-select:none;user-select:none;-webkit-touch-callout:none}
 html,body{margin:0;height:100%;background:var(--bg);color:var(--ink);font:16px/1.35 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;overflow:hidden;overscroll-behavior:none;touch-action:none}
 canvas#game{position:fixed;inset:0;width:100%;height:100%;display:block}
-.screen{position:fixed;inset:0;display:none;align-items:center;justify-content:center;padding:max(16px,env(safe-area-inset-top)) max(16px,env(safe-area-inset-right)) max(16px,env(safe-area-inset-bottom)) max(16px,env(safe-area-inset-left));background:radial-gradient(1200px 600px at 50% -10%,#24365a,var(--bg));overflow:auto;touch-action:pan-y}
+.screen{position:fixed;inset:0;z-index:10;display:none;align-items:center;justify-content:center;padding:max(16px,env(safe-area-inset-top)) max(16px,env(safe-area-inset-right)) max(16px,env(safe-area-inset-bottom)) max(16px,env(safe-area-inset-left));background:radial-gradient(1200px 600px at 50% -10%,#24365a,var(--bg));overflow:auto;touch-action:pan-y}
 .screen.on{display:flex}
 .screen.overlay{background:rgba(8,12,20,.82)}
 .card{width:min(440px,100%);margin:auto;background:var(--panel);border-radius:18px;padding:20px;box-shadow:0 10px 40px rgba(0,0,0,.45)}
@@ -50,7 +50,7 @@ video#cam{width:100%;border-radius:12px;background:#000;max-height:240px;object-
 .plist div{display:flex;justify-content:space-between;padding:6px 0;border-bottom:1px solid #2a3957;font-size:15px}
 
 /* HUD */
-#hud{position:fixed;inset:0;pointer-events:none;display:none}
+#hud{position:fixed;inset:0;pointer-events:none;display:none;z-index:3} /* above the touch zones, so HUD buttons are tappable */
 #hud.on{display:block}
 #zone-move,#zone-look{position:fixed;top:0;bottom:0;display:none;touch-action:none}
 #zone-move{left:0;width:42%}#zone-look{right:0;width:58%}
@@ -61,14 +61,40 @@ video#cam{width:100%;border-radius:12px;background:#000;max-height:240px;object-
 .pbtn{position:fixed;display:none;align-items:center;justify-content:center;border-radius:50%;background:rgba(255,255,255,.16);border:2px solid rgba(255,255,255,.45);color:#fff;font-weight:800;pointer-events:auto;touch-action:none;text-align:center;font-size:13px;line-height:1.1}
 .pbtn.down{background:rgba(255,159,28,.6)}
 .touch.playing .pbtn{display:flex}
-#btn-fire{width:92px;height:92px;right:calc(max(22px,env(safe-area-inset-right)) + 12px);bottom:calc(max(24px,env(safe-area-inset-bottom)) + 52px);font-size:15px}
-#btn-jet{width:78px;height:78px;right:calc(max(22px,env(safe-area-inset-right)) + 118px);bottom:calc(max(24px,env(safe-area-inset-bottom)) + 12px)}
-#btn-reload{width:54px;height:54px;right:calc(max(22px,env(safe-area-inset-right)) + 112px);bottom:calc(max(24px,env(safe-area-inset-bottom)) + 108px)}
-#btn-weapon{width:54px;height:54px;right:calc(max(22px,env(safe-area-inset-right)) + 14px);bottom:calc(max(24px,env(safe-area-inset-bottom)) + 156px)}
-#cross{position:fixed;left:50%;top:50%;width:26px;height:26px;margin:-13px 0 0 -13px;opacity:.85}
-#cross:before,#cross:after{content:"";position:absolute;background:#fff;box-shadow:0 0 2px #000}
-#cross:before{left:12px;top:0;width:2px;height:26px;clip-path:polygon(0 0,100% 0,100% 38%,0 38%,0 62%,100% 62%,100% 100%,0 100%)}
-#cross:after{top:12px;left:0;height:2px;width:26px;clip-path:polygon(0 0,38% 0,38% 100%,0 100%,62% 100%,62% 0,100% 0,100% 100%)}
+/* Touch buttons: small, packed into the bottom-right corner. FIRE only appears if auto-fire is switched off. */
+.pbtn{font-size:11px;border-width:1.5px}
+#btn-fire{display:none!important;width:70px;height:70px;right:calc(max(22px,env(safe-area-inset-right)) + 10px);bottom:calc(max(24px,env(safe-area-inset-bottom)) + 60px);font-size:13px}
+.touch.playing.manualfire #btn-fire{display:flex!important}
+#btn-jet{width:56px;height:56px;right:calc(max(18px,env(safe-area-inset-right)) + 10px);bottom:calc(max(20px,env(safe-area-inset-bottom)) + 8px)}
+#btn-jump{width:46px;height:46px;right:calc(max(18px,env(safe-area-inset-right)) + 74px);bottom:calc(max(20px,env(safe-area-inset-bottom)) + 8px)}
+#btn-scope{width:46px;height:46px;right:calc(max(18px,env(safe-area-inset-right)) + 16px);bottom:calc(max(20px,env(safe-area-inset-bottom)) + 72px)}
+#btn-scope.on{background:rgba(46,196,182,.65)}
+#btn-reload{width:38px;height:38px;right:calc(max(18px,env(safe-area-inset-right)) + 78px);bottom:calc(max(20px,env(safe-area-inset-bottom)) + 62px);font-size:15px}
+#btn-weapon{width:38px;height:38px;right:calc(max(18px,env(safe-area-inset-right)) + 20px);bottom:calc(max(20px,env(safe-area-inset-bottom)) + 126px);font-size:15px}
+#btn-zoom{width:40px;height:40px;right:calc(max(18px,env(safe-area-inset-right)) + 74px);bottom:calc(max(20px,env(safe-area-inset-bottom)) + 108px)}
+.touch.playing #btn-zoom{display:none}
+.touch.playing.scoped #btn-zoom.show{display:flex}
+#cross{position:fixed;left:50%;top:50%;width:0;height:0;--gap:6px;opacity:.9}
+#cross i{position:absolute;background:#fff;box-shadow:0 0 2px #000}
+#cross i:nth-child(1){left:-1px;top:calc(-1 * var(--gap) - 11px);width:2px;height:11px}
+#cross i:nth-child(2){left:-1px;top:var(--gap);width:2px;height:11px}
+#cross i:nth-child(3){top:-1px;left:calc(-1 * var(--gap) - 11px);width:11px;height:2px}
+#cross i:nth-child(4){top:-1px;left:var(--gap);width:11px;height:2px}
+#cross b{position:absolute;left:-1px;top:-1px;width:2px;height:2px;background:#fff;box-shadow:0 0 2px #000}
+#cross.lock i,#cross.lock b{background:#ff4d6d}
+.scoped #cross{display:none}
+/* sniper scope: black mask with a round lens, fine cross hairs and range ticks */
+#scope{position:fixed;inset:0;display:none;pointer-events:none;
+  background:radial-gradient(circle at 50% 50%,transparent 0,transparent calc(min(46vh,46vw) - 1px),#000 calc(min(46vh,46vw) + 1px))}
+.scoped #scope{display:block}
+#scope:before{content:"";position:absolute;inset:0;background:radial-gradient(circle at 50% 50%,transparent 55%,rgba(0,0,0,.35) calc(min(46vh,46vw)))}
+#scope i{position:absolute;background:#000}
+#scope .sh{left:calc(50% - min(46vh,46vw));width:calc(2 * min(46vh,46vw));top:calc(50% - .5px);height:1px}
+#scope .sv{top:calc(50% - min(46vh,46vw));height:calc(2 * min(46vh,46vw));left:calc(50% - .5px);width:1px}
+#scope .gap{background:rgba(0,0,0,0);box-shadow:none;left:calc(50% - 14px);top:calc(50% - 14px);width:28px;height:28px;background:radial-gradient(circle,rgba(180,230,255,.0) 0,rgba(180,230,255,0) 100%)}
+#scope .dot{left:calc(50% - 2px);top:calc(50% - 2px);width:4px;height:4px;border-radius:50%;background:#ff3b3b}
+#scope .tk{width:9px;height:1px}
+#scope b{position:absolute;left:calc(50% - min(46vh,46vw) + 16px);bottom:calc(50% - min(46vh,46vw) + 16px);color:#fff;font-weight:800;text-shadow:0 1px 3px #000;font-size:14px}
 #hitm{position:fixed;left:50%;top:50%;width:34px;height:34px;margin:-17px 0 0 -17px;opacity:0;transition:opacity .25s}
 #hitm.on{opacity:1;transition:none}
 #hitm:before,#hitm:after{content:"";position:absolute;left:16px;top:-4px;width:3px;height:42px;background:#fff;transform:rotate(45deg)}
@@ -90,7 +116,8 @@ video#cam{width:100%;border-radius:12px;background:#000;max-height:240px;object-
 #feed{position:fixed;left:max(14px,env(safe-area-inset-left));top:calc(max(12px,env(safe-area-inset-top)) + 52px);font-size:13px;text-shadow:0 1px 3px #000}
 #feed div{background:rgba(0,0,0,.35);padding:2px 8px;border-radius:5px;margin-bottom:3px;animation:fade 4.5s forwards}
 @keyframes fade{0%,80%{opacity:1}100%{opacity:0}}
-#pause{position:fixed;right:max(14px,env(safe-area-inset-right));top:calc(max(10px,env(safe-area-inset-top)) + 106px);pointer-events:auto;width:40px;height:34px;padding:0;margin:0;background:rgba(0,0,0,.4);border-radius:8px}
+#pause{position:fixed;right:max(14px,env(safe-area-inset-right));top:calc(max(10px,env(safe-area-inset-top)) + 106px);pointer-events:auto;width:32px;height:28px;font-size:11px;padding:0;margin:0;background:rgba(0,0,0,.4);border-radius:8px}
+#btn-cam{position:fixed;left:calc(50% + 58px);top:max(8px,env(safe-area-inset-top));pointer-events:auto;width:32px;height:28px;padding:0;margin:0;background:rgba(0,0,0,.4);border-radius:8px;font-size:14px}
 #banner{position:fixed;left:0;right:0;top:34%;text-align:center;font-size:30px;font-weight:900;text-shadow:0 2px 8px #000;pointer-events:none}
 #banner small{display:block;font-size:15px;font-weight:600;color:#dbe7ff}
 #net{position:fixed;left:50%;bottom:6px;transform:translateX(-50%);font-size:11px;color:#cfe0ff;opacity:.7}
@@ -102,14 +129,16 @@ video#cam{width:100%;border-radius:12px;background:#000;max-height:240px;object-
 <body>
 <canvas id="game"></canvas>
 
+<div id="scope"><i class="sh"></i><i class="sv"></i><i class="dot"></i><b id="zoomtag">4x</b></div>
 <div id="hud">
-  <div id="vig"></div><div id="cross"></div><div id="hitm"></div>
+  <div id="vig"></div><div id="cross"><i></i><i></i><i></i><i></i><b></b></div><div id="hitm"></div>
   <div class="hbar"><div class="bar" id="hpbar"><i id="hp"></i></div><div class="bar fuel" id="fuelbar"><i id="fuel"></i></div></div>
   <div id="top"><span id="timer">5:00</span><small id="goal"></small></div>
   <div id="board"></div>
   <div id="feed"></div>
   <div id="ammo"><small id="wname">SMG</small><big id="ammon">30</big></div>
   <button id="pause">❚❚</button>
+  <button id="btn-cam" title="Switch camera">👁</button>
   <div id="banner"></div>
   <div id="net"></div>
 </div>
@@ -117,6 +146,9 @@ video#cam{width:100%;border-radius:12px;background:#000;max-height:240px;object-
 <div id="stick"><div id="knob"></div></div>
 <button class="pbtn" id="btn-fire">FIRE</button>
 <button class="pbtn" id="btn-jet">JET</button>
+<button class="pbtn" id="btn-jump">JUMP</button>
+<button class="pbtn" id="btn-scope">AIM</button>
+<button class="pbtn" id="btn-zoom">4x</button>
 <button class="pbtn" id="btn-reload">⟳</button>
 <button class="pbtn" id="btn-weapon">⇄</button>
 <div id="rotate">Rotate your phone sideways to play 📱↻</div>
@@ -210,6 +242,8 @@ video#cam{width:100%;border-radius:12px;background:#000;max-height:240px;object-
   <input type="range" id="sens" min="0.4" max="2.2" step="0.05" value="1">
   <label for="cam3">Camera</label>
   <select id="cam3"><option value="1">Third person</option><option value="0">First person</option></select>
+  <label for="auto">Auto-fire when aiming at an enemy (turn off to get a FIRE button)</label>
+  <select id="auto"><option value="1">On</option><option value="0">Off</option></select>
   <label for="snd">Sound</label>
   <select id="snd"><option value="1">On</option><option value="0">Off</option></select>
   <button class="pri" data-back>Done</button>
