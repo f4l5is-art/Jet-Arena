@@ -144,6 +144,23 @@ const defaultServer = /^https?:$/.test(location.protocol) ? `${location.protocol
 $('server').value = store.get('server', defaultServer) || defaultServer;
 const serverUrl = () => { const u = $('server').value.trim(); store.set('server', u); return u; };
 const oerr = (m) => { $('o-err').textContent = m || ''; };
+// Free hosting sleeps when idle: poke /health until it answers, telling the player what's happening.
+async function wake() {
+  const ws = serverUrl();
+  if (!/^wss?:\/\//.test(ws)) return;
+  const health = ws.replace(/^ws/, 'http').replace(/\/ws\/?$/, '') + '/health';
+  const ping = async () => {
+    const c = new AbortController(), t = setTimeout(() => c.abort(), 4000);
+    try { return (await fetch(health, { cache: 'no-store', signal: c.signal })).ok; } catch { return false; } finally { clearTimeout(t); }
+  };
+  if (await ping()) return;
+  for (let i = 0; i < 20; i++) {
+    oerr('Waking up the server… this can take up to a minute');
+    if (await ping()) { oerr(''); return; }
+    await new Promise((r) => setTimeout(r, 1500));
+  }
+  oerr('');
+}
 
 $('b-online').onclick = () => { show('s-online'); oerr(''); refreshRooms(); };
 $('o-refresh').onclick = refreshRooms;
@@ -152,6 +169,7 @@ async function refreshRooms() {
   box.textContent = '';
   if (!serverUrl()) return;
   try {
+    await wake();
     const rooms = await listRooms(serverUrl());
     if (!rooms.length) { box.innerHTML = '<div class="note">No public rooms yet. Create one!</div>'; return; }
     for (const r of rooms) {
@@ -167,6 +185,7 @@ async function refreshRooms() {
 $('o-host').onclick = async () => {
   initAudio(); oerr('');
   try {
+    await wake();
     const net = await hostOnline(serverUrl(), myName(), true);
     const s = new HostSession({ name: myName(), bots: 4, net });
     session = s;
@@ -187,6 +206,7 @@ async function joinRoom(code) {
   initAudio(); oerr('');
   if (String(code).trim().length < 4) return oerr('Enter the 4-letter room code');
   try {
+    await wake();
     const net = await joinOnline(serverUrl(), code, myName());
     const s = new ClientSession(net);
     await s.ready;

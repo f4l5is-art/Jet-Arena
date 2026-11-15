@@ -245,6 +245,7 @@ function part(geo, color, m, jitter = 0.08) {
 const MAT4 = new THREE.Matrix4(), Q = new THREE.Quaternion(), V = new THREE.Vector3(), S = new THREE.Vector3(), EU = new THREE.Euler();
 const place = (x, y, z, sx, sy, sz, ry = 0) => MAT4.compose(V.set(x, y, z), Q.setFromEuler(EU.set(0, ry, 0)), S.set(sx, sy, sz)).clone();
 
+const SNOW = new THREE.Color(0xeef3f8);
 function buildDecor() {
   const parts = [];
   const trunk = new THREE.CylinderGeometry(0.28, 0.4, 2.4, 6);
@@ -252,7 +253,7 @@ function buildDecor() {
   const rock = new THREE.IcosahedronGeometry(1, 0);
   const barrel = new THREE.CylinderGeometry(0.42, 0.42, 1.1, 8);
   const ring = new THREE.CylinderGeometry(0.44, 0.44, 0.07, 8);
-  const mount = new THREE.ConeGeometry(1, 1, 6, 1, true);
+  const mount = new THREE.ConeGeometry(1, 1, 6, 10, true);
   const greens = [0x2f6b3a, 0x377a41, 0x2a5f35, 0x3c7e45];
   for (const d of MAP.decor) {
     const s = d.s || 1, r = d.r || 0;
@@ -273,8 +274,16 @@ function buildDecor() {
       parts.push(part(ring, 0x23262b, place(d.x, 0.82, d.z, 1, 1, 1), 0));
     } else if (d.t === 'mount') {
       const W = 18 * s, Hh = 22 * s;
-      parts.push(part(mount, 0x6c7f95, place(d.x, d.y + Hh / 2, d.z, W, Hh, W, r), 0.1));
-      parts.push(part(mount, 0xeef3f8, place(d.x, d.y + Hh * 0.85, d.z, W * 0.3, Hh * 0.3, W * 0.3, r), 0));
+      // One cone, snow painted by vertex colour (a separate cap cone shared the same surface and z-fought).
+      const g = part(mount, 0x6c7f95, place(d.x, d.y + Hh / 2, d.z, W, Hh, W, r), 0.1);
+      const pos = g.attributes.position, col = g.attributes.color, c = new THREE.Color();
+      for (let i = 0; i < pos.count; i++) {
+        const t = (pos.getY(i) - d.y) / Hh; // 0 base .. 1 tip
+        const k = Math.min(1, Math.max(0, (t - 0.62) / 0.12));
+        c.setRGB(col.getX(i), col.getY(i), col.getZ(i)).lerp(SNOW, k);
+        col.setXYZ(i, c.r, c.g, c.b);
+      }
+      parts.push(g);
     }
   }
   return mergeGeometries(parts, false);
