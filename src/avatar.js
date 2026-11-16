@@ -3,6 +3,7 @@
 // the jetpack tilts the body, landings squash, hits flash, and the dead fall over.
 import * as THREE from 'three';
 import { rayWorld } from './core.js';
+import { fillGun } from './guns.js';
 
 const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
 const wrap = (a) => { while (a > Math.PI) a -= 2 * Math.PI; while (a < -Math.PI) a += 2 * Math.PI; return a; };
@@ -57,13 +58,12 @@ export class Avatar {
     add(this.head, box(0.28, 0.07, 0.04), visor, 0, 0.19, -0.16);
 
     this.aim = group(this.torso, 0, 0.5, 0); // shoulder height; rotates to the aim pitch
-    add(this.aim, box(0.09, 0.13, 0.55), dark, 0.14, -0.06, -0.4);
-    add(this.aim, box(0.05, 0.05, 0.2), gear, 0.14, -0.05, -0.75);
-    add(this.aim, box(0.07, 0.18, 0.08), dark, 0.14, -0.18, -0.35);
+    this.gun = group(this.aim, 0.14, -0.05, -0.28); this.gun.scale.setScalar(1.1);
     add(this.aim, box(0.12, 0.12, 0.36), this.mShirt, 0.24, -0.03, -0.15).rotation.y = 0.58; // right arm to the grip
-    add(this.aim, box(0.12, 0.12, 0.69), this.mShirt, -0.1, -0.04, -0.25).rotation.y = -0.76; // left arm to the foregrip
+    this.armL = add(this.aim, box(0.12, 0.12, 1), this.mShirt, 0, -0.04, 0); // left arm, stretched to the foregrip (setWeapon)
     this.muzzle = add(this.aim, box(0.16, 0.16, 0.16), flashMat, 0.14, -0.05, -0.9);
     this.muzzle.visible = false;
+    this.wid = -1; this.setWeapon(p.weapon == null ? 1 : p.weapon);
 
     this.tag = r.makeTag(p.name); this.tag.position.y = 2.25; this.root.add(this.tag);
     this.shadow = new THREE.Mesh(shadowGeo, shadowMat);
@@ -74,6 +74,18 @@ export class Avatar {
     this.cur = { tL: 0, tR: 0, kL: 0, kR: 0, air: 0, lean: 0 };
     this.wasGr = true; this.airVy = 0; this.land = 0; this.step = 0;
     this.flash = 0; this.recoil = 0; this.muz = 0; this.deadT = 0; this.puffT = 0;
+  }
+
+  setWeapon(id) {
+    this.wid = id;
+    const spec = fillGun(this.gun, id);
+    this.muzzle.position.set(0.14, -0.05, -0.28 + spec.muz * 1.1 - 0.05);
+    // left hand target in aim space; the arm runs from the left shoulder to it
+    const sx = -0.338, sz = 0, tx = 0.14, ty = -0.095, tz = -0.28 + spec.lz * 1.1;
+    const dx = tx - sx, dz = tz - sz, len = Math.hypot(dx, dz);
+    this.armL.position.set((sx + tx) / 2, -0.06, (sz + tz) / 2);
+    this.armL.rotation.y = Math.atan2(dx, dz);
+    this.armL.scale.z = len;
   }
 
   hit() { this.flash = 0.14; }
@@ -176,6 +188,7 @@ export class Avatar {
     this.torso.rotation.x = c.lean;
 
     // --- the rifle always points exactly where we aim, whatever the body is doing
+    if (p.weapon != null && p.weapon !== this.wid) this.setWeapon(p.weapon);
     this.recoil *= Math.exp(-16 * dt);
     this.aim.rotation.x = p.pitch - c.lean - c.air + this.recoil * 0.07;
     this.aim.position.z = this.recoil * 0.1;

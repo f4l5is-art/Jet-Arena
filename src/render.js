@@ -3,6 +3,7 @@ import * as THREE from 'three';
 import { MAP, HALF, EYE, cameraPos } from './core.js';
 import { Avatar } from './avatar.js';
 import { buildWorld, HORIZON, FOG_NEAR, FOG_FAR, CAM_FAR } from './world.js';
+import { fillGun } from './guns.js';
 
 
 export class Renderer {
@@ -131,25 +132,28 @@ export class Renderer {
       m.position.set((from[0] + to[0]) / 2, (from[1] + to[1]) / 2, (from[2] + to[2]) / 2);
       vm.add(m); return m;
     };
-    // rifle (parts overlap each other a little, so there are no seams)
-    box(0.07, 0.1, 0.55, dark, 0, 0, -0.12);        // receiver
-    box(0.045, 0.045, 0.3, gear, 0, 0.012, -0.5);   // barrel / handguard
-    box(0.06, 0.09, 0.22, dark, 0, -0.005, 0.2);    // stock
-    box(0.05, 0.13, 0.06, dark, 0, -0.1, 0.02);     // pistol grip
-    box(0.045, 0.15, 0.07, gear, 0, -0.11, -0.2);   // magazine
-    box(0.03, 0.03, 0.05, gear, 0, 0.06, -0.3);     // front sight
-    // right arm: from the grip back to below the screen's edge
-    limb([0.0, -0.12, 0.02], [0.2, -0.45, 0.8], 0.075, sleeve);
-    box(0.082, 0.082, 0.03, cuff, 0.02, -0.13, 0.08).rotation.y = -0.2;
-    box(0.075, 0.09, 0.09, skin, 0, -0.105, 0.0);   // right hand wraps the grip
-    // left arm: from the handguard back to the lower-left
-    limb([0.0, -0.05, -0.36], [-0.28, -0.4, 0.7], 0.075, sleeve);
-    box(0.082, 0.082, 0.03, cuff, -0.03, -0.09, -0.22).rotation.y = 0.5;
-    box(0.085, 0.07, 0.13, skin, 0, -0.042, -0.37); // left hand cups the handguard
+    // The gun and both arms are rebuilt whenever the weapon changes (see setVmWeapon).
+    this.vmBuild = (id) => {
+      vm.clear();
+      const gun = new THREE.Group(); vm.add(gun);
+      const spec = fillGun(gun, id), lz = spec.lz;
+      // right arm: from the grip back to below the screen's edge
+      limb([0.0, -0.12, 0.02], [0.2, -0.45, 0.8], 0.075, sleeve);
+      box(0.082, 0.082, 0.03, cuff, 0.02, -0.13, 0.08).rotation.y = -0.2;
+      box(0.075, 0.09, 0.09, skin, 0, -0.105, 0.0);   // right hand wraps the grip
+      // left arm: from the foregrip back to the lower-left
+      limb([0.0, -0.05, lz + 0.01], [-0.28, -0.4, 0.7], 0.075, sleeve);
+      box(0.082, 0.082, 0.03, cuff, -0.03, -0.09, lz + 0.15).rotation.y = 0.5;
+      box(0.085, 0.07, 0.13, skin, 0, -0.042, lz);    // left hand cups the foregrip
+      this.flashVm.position.set(0, 0.012, spec.muz - 0.12);
+      vm.add(this.flashVm);
+      this.vmId = id;
+    };
 
     this.flashVm = new THREE.Mesh(new THREE.BoxGeometry(0.1, 0.1, 0.1), new THREE.MeshBasicMaterial({ color: 0xfff0a0 }));
     this.flashVm.position.set(0, 0.012, -0.72);
     this.flashVm.visible = false; vm.add(this.flashVm);
+    this.vmBuild(1);
     vm.visible = false;
     this.vmScene.add(vm);
     this.vm = vm; this.vmKick = 0; this.vmFlash = 0; this.vmAds = 0;
@@ -228,6 +232,7 @@ export class Renderer {
       const fpv = !!me && me.alive && (!this.thirdPerson || this.squeezed) && !this.scoped;
       this.vm.visible = fpv;
       if (fpv) {
+        if (me.weapon !== this.vmId) this.vmBuild(me.weapon);
         this.vmAds += ((look.ads ? 1 : 0) - this.vmAds) * (1 - Math.exp(-14 * dt));
         this.vmKick *= Math.exp(-14 * dt);
         const sp = Math.hypot(me.vx || 0, me.vz || 0), t = performance.now() / 1000;
