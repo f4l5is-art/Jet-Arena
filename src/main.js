@@ -1,5 +1,6 @@
 import { WEAPONS, SNIPER, BASE_FOV, aimedEnemy, spreadOf, adsFov } from './core.js';
 import { Renderer } from './render.js';
+import { LobbyStage } from './lobby.js';
 import { Input } from './input.js';
 import { HostSession, ClientSession } from './session.js';
 import { HostNet, hostOnline, joinOnline, listRooms, hotspotJoin } from './net.js';
@@ -51,6 +52,43 @@ function applySettings() {
 }
 for (const k of ['qual', 'sens', 'cam3', 'snd', 'auto']) $(k).addEventListener('input', applySettings);
 applySettings();
+// ------------------------------------------------------------------ lobby (menu) extras
+const lobby = new LobbyStage(renderer, $('stage'));
+let lobbyWeapon = Number(store.get('lw', '1'));
+if (!(lobbyWeapon >= 0 && lobbyWeapon < WEAPONS.length)) lobbyWeapon = 1;
+function pickLobbyWeapon(i) {
+  lobbyWeapon = i; store.set('lw', String(i)); lobby.setWeapon(i);
+  document.querySelectorAll('#wchips button').forEach((b, k) => b.classList.toggle('on', k === i));
+  const w = WEAPONS[i];
+  const bar = (label, v) => `<div>${label}<i><u style="width:${Math.round(Math.min(1, v) * 100)}%"></u></i></div>`;
+  $('wstat').innerHTML = bar('Damage', (w.dmg * Math.min(w.pellets, 4)) / 75) + bar('Fire rate', 0.085 / w.rate) + bar('Range', w.range / 160);
+}
+WEAPONS.forEach((w, i) => {
+  const b = document.createElement('button'); b.textContent = w.name; b.onclick = () => pickLobbyWeapon(i);
+  $('wchips').appendChild(b);
+});
+pickLobbyWeapon(lobbyWeapon);
+// Quick settings around the soldier drive the same <select>s as the Settings screen.
+function syncSegs() {
+  document.querySelectorAll('.seg').forEach((seg) => {
+    const v = $(seg.dataset.sel).value;
+    seg.querySelectorAll('button').forEach((b) => b.classList.toggle('on', b.dataset.v === v));
+  });
+}
+document.querySelectorAll('.seg').forEach((seg) => seg.querySelectorAll('button').forEach((b) => {
+  b.onclick = () => { const sel = $(seg.dataset.sel); sel.value = b.dataset.v; sel.dispatchEvent(new Event('input')); };
+}));
+for (const k of ['qual', 'cam3', 'auto', 'snd']) $(k).addEventListener('input', syncSegs);
+syncSegs();
+// Drag the stage to turn the soldier.
+{
+  let drag = null;
+  const st = $('stage');
+  st.addEventListener('pointerdown', (e) => { drag = e.clientX; st.setPointerCapture(e.pointerId); });
+  st.addEventListener('pointermove', (e) => { if (drag !== null) { lobby.spin += (e.clientX - drag) * 0.012; drag = e.clientX; } });
+  const end = () => { drag = null; };
+  st.addEventListener('pointerup', end); st.addEventListener('pointercancel', end);
+}
 const myName = () => {
   const n = $('name').value.trim() || 'Player';
   store.set('name', $('name').value.trim());
@@ -408,7 +446,7 @@ function frame(now) {
   requestAnimationFrame(frame);
   const dt = Math.min(0.1, (now - last) / 1000);
   last = now;
-  if (!session) return;
+  if (!session) { if (current === 's-menu') lobby.draw(dt); return; }
   const frozen = paused && session.isHost && !session.net; // only solo can truly pause
   if (!frozen) {
     const me = session.view.me;
