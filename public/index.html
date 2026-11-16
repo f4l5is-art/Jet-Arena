@@ -49,6 +49,53 @@ video#cam{width:100%;border-radius:12px;background:#000;max-height:240px;object-
 .step i{flex:none;width:24px;height:24px;border-radius:50%;background:var(--acc);color:#1b1200;font-style:normal;font-weight:800;text-align:center;line-height:24px;font-size:13px}
 .plist div{display:flex;justify-content:space-between;padding:6px 0;border-bottom:1px solid #2a3957;font-size:15px}
 
+
+/* LOBBY */
+#s-menu{background:radial-gradient(900px 500px at 50% 45%,rgba(255,159,28,.10),transparent 70%),linear-gradient(transparent 55%,rgba(8,12,20,.75));padding:0;overflow:hidden;touch-action:none}
+.lb{position:relative;width:100%;height:100%;display:grid;grid-template-columns:minmax(210px,1fr) minmax(0,1.3fr) minmax(210px,1fr);grid-template-rows:auto 1fr auto auto;gap:6px 18px;
+  padding:max(12px,env(safe-area-inset-top)) max(18px,env(safe-area-inset-right)) max(8px,env(safe-area-inset-bottom)) max(18px,env(safe-area-inset-left))}
+.lb-top{grid-column:1/4;display:flex;justify-content:space-between;align-items:center;position:relative;z-index:2}
+.brand{display:flex;align-items:center;gap:10px}
+.brand img{width:38px;height:38px;display:block}
+.brand b{display:block;letter-spacing:3px;font-size:15px}
+.brand small{display:block;color:var(--dim);font-size:11px;letter-spacing:1px;margin-top:-1px}
+button.ico{width:42px;height:42px;padding:0;margin:0;font-size:22px;border-radius:12px;background:rgba(255,255,255,.08)}
+.lb-left{grid-column:1;grid-row:2;align-self:center;position:relative;z-index:2}
+.lb-stage{grid-column:2;grid-row:2;position:relative;touch-action:none;cursor:grab;min-height:0}
+.lb-stage .hint{position:absolute;bottom:2px;width:100%;text-align:center;font-size:11px;color:var(--dim);letter-spacing:1px;opacity:.7}
+.lb-right{grid-column:3;grid-row:2;align-self:center;position:relative;z-index:2}
+.lb-right h1{font-size:40px;line-height:1}
+.lb-right .sub{margin:2px 0 12px}
+button.big{font-size:24px;letter-spacing:4px;padding:16px}
+.cap{display:block;text-align:center;color:var(--dim);font-size:11px;margin-top:3px}
+.lb-arms{grid-column:1/4;grid-row:3;display:flex;flex-direction:column;align-items:center;gap:4px;position:relative;z-index:2}
+.wchips{display:flex;gap:8px}
+.wchips button{width:auto;margin:0;padding:8px 14px;font-size:13px;background:rgba(255,255,255,.08)}
+.wchips button.on{background:var(--acc);color:#1b1200}
+.wstat{display:flex;gap:18px;font-size:11px;color:var(--dim);min-height:30px;align-items:center}
+.wstat div{display:flex;align-items:center;gap:6px}
+.wstat i{display:block;width:56px;height:5px;border-radius:3px;background:rgba(255,255,255,.14);overflow:hidden}
+.wstat u{display:block;height:100%;background:var(--acc);text-decoration:none}
+.lb-foot{grid-column:1/4;grid-row:4;text-align:center;font-size:11px;color:var(--dim);opacity:.6;letter-spacing:1px}
+.qs{margin-top:12px}
+.qs>div{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:7px;font-size:13px;color:var(--dim)}
+.seg{display:flex;background:rgba(255,255,255,.07);border-radius:9px;padding:2px}
+.seg button{width:auto;margin:0;padding:5px 10px;font-size:12px;background:transparent;border-radius:7px;color:var(--dim)}
+.seg button.on{background:var(--acc2);color:#02201d}
+@media (orientation:portrait){
+  .lb{grid-template-columns:1fr;grid-template-rows:auto minmax(0,1fr) auto auto auto auto;gap:8px}
+  .lb-top,.lb-left,.lb-stage,.lb-right,.lb-arms,.lb-foot{grid-column:1}
+  .lb-stage{grid-row:2}.lb-arms{grid-row:3}.lb-right{grid-row:4}.lb-left{grid-row:5}.lb-foot{grid-row:6}
+  .qs{display:grid;grid-template-columns:1fr 1fr;gap:0 14px}
+  .lb-right h1{font-size:30px}
+}
+@media (max-height:480px) and (orientation:landscape){
+  .lb{gap:2px 14px}.lb-right h1{font-size:30px}.lb-right .sub{margin-bottom:6px}
+  button.big{font-size:20px;padding:11px}.lb-right button{margin-top:6px;padding:10px}
+  .qs{margin-top:8px}.qs>div{margin-bottom:4px}.brand img{width:30px;height:30px}
+  .wstat{min-height:18px}.lb-foot,.note,.cap{display:none}.wchips button{padding:6px 12px}
+}
+
 /* HUD */
 #hud{position:fixed;inset:0;pointer-events:none;display:none;z-index:3} /* above the touch zones, so HUD buttons are tappable */
 #hud.on{display:block}
@@ -153,16 +200,41 @@ video#cam{width:100%;border-radius:12px;background:#000;max-height:240px;object-
 <button class="pbtn" id="btn-weapon">⇄</button>
 <div id="rotate">Rotate your phone sideways to play 📱↻</div>
 
-<!-- MAIN MENU -->
-<div class="screen on" id="s-menu"><div class="card">
-  <h1>JET <b>ARENA</b></h1>
-  <p class="sub">Jetpack gunfights. Light enough for any phone.</p>
-  <label for="name">Your name</label>
-  <input type="text" id="name" maxlength="14" placeholder="Player" autocomplete="off">
-  <button class="pri" id="b-solo">Play vs bots</button>
-  <div class="row"><button id="b-online">Online lobby</button><button id="b-hotspot">Hotspot <span class="tag">beta</span></button></div>
-  <button class="ghost" id="b-settings">Settings</button>
-  <div class="note" id="install"></div>
+<!-- MAIN MENU (the lobby: your soldier in the middle, everything else around it) -->
+<div class="screen on" id="s-menu"><div class="lb">
+  <div class="lb-top">
+    <div class="brand"><img src="rahman-logo.png" alt="Rahman Corp"><div><b>RAHMAN CORP</b><small>presents</small></div></div>
+    <button class="ico" id="b-settings" aria-label="Settings">&#9881;</button>
+  </div>
+
+  <div class="lb-left">
+    <label for="name">Callsign</label>
+    <input type="text" id="name" maxlength="14" placeholder="Player" autocomplete="off">
+    <div class="qs">
+      <div><span>Graphics</span><div class="seg" data-sel="qual"><button data-v="0">Low</button><button data-v="1">Med</button><button data-v="2">High</button></div></div>
+      <div><span>Camera</span><div class="seg" data-sel="cam3"><button data-v="1">3rd</button><button data-v="0">1st</button></div></div>
+      <div><span>Auto-fire</span><div class="seg" data-sel="auto"><button data-v="1">On</button><button data-v="0">Off</button></div></div>
+      <div><span>Sound</span><div class="seg" data-sel="snd"><button data-v="1">On</button><button data-v="0">Off</button></div></div>
+    </div>
+  </div>
+
+  <div class="lb-stage" id="stage"><div class="hint">drag to turn</div></div>
+
+  <div class="lb-right">
+    <h1>JET <b>ARENA</b></h1>
+    <p class="sub">Jetpack gunfights.</p>
+    <button class="pri big" id="b-solo">PLAY</button>
+    <small class="cap">vs bots</small>
+    <button class="alt" id="b-online">Online lobby</button>
+    <button id="b-hotspot">Hotspot <span class="tag">beta</span></button>
+    <div class="note" id="install"></div>
+  </div>
+
+  <div class="lb-arms">
+    <div class="wchips" id="wchips"></div>
+    <div class="wstat" id="wstat"></div>
+  </div>
+  <div class="lb-foot">A Rahman Corp game</div>
 </div></div>
 
 <!-- ONLINE -->
