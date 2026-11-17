@@ -1,8 +1,8 @@
 // Shared constants, map, weapons, movement physics and ray helpers.
 // Pure JS (no DOM, no three.js) so it runs in the browser and in Node tests.
 
-import { MAP, HALF } from './map.js';
-export { MAP, HALF }; // the arena (100 m x 100 m): see map.js
+import { MAP, HALF, setMapKind } from './map.js';
+export { MAP, HALF, setMapKind }; // the arena (100 m x 100 m): see map.js
 
 export const TICK = 1 / 60;
 export const R = 0.4; // player radius
@@ -97,9 +97,19 @@ export function moveStep(p, inp, dt = TICK) {
 
   if (p.y <= 0) { p.y = 0; if (p.vy < 0) p.vy = 0; p.ground = true; }
   if (p.y > CEILING) { p.y = CEILING; if (p.vy > 0) p.vy = 0; } // flight ceiling
-  const lim = HALF - R;
-  if (p.x > lim) { p.x = lim; p.vx = 0; } else if (p.x < -lim) { p.x = -lim; p.vx = 0; }
-  if (p.z > lim) { p.z = lim; p.vz = 0; } else if (p.z < -lim) { p.z = -lim; p.vz = 0; }
+  if (MAP.radius) { // round island: the sea starts at MAP.radius
+    const lim = MAP.radius - R, dd = Math.hypot(p.x, p.z);
+    if (dd > lim) {
+      const nx = p.x / dd, nz = p.z / dd;
+      p.x = nx * lim; p.z = nz * lim;
+      const vn = p.vx * nx + p.vz * nz; if (vn > 0) { p.vx -= vn * nx; p.vz -= vn * nz; }
+      p.kx = 0; p.kz = 0;
+    }
+  } else {
+    const lim = HALF - R;
+    if (p.x > lim) { p.x = lim; p.vx = 0; } else if (p.x < -lim) { p.x = -lim; p.vx = 0; }
+    if (p.z > lim) { p.z = lim; p.vz = 0; } else if (p.z < -lim) { p.z = -lim; p.vz = 0; }
+  }
 }
 
 // Ray vs AABB (slab method). Returns entry distance or -1.
@@ -168,10 +178,11 @@ export function rayPlayers(ox, oy, oz, dx, dy, dz, maxT, players, skipId, pad = 
   let best = maxT, found = null;
   for (const p of players) {
     if (p.id === skipId || !p.alive) continue;
-    const bh = BODY_HALF + pad, hh = HEAD_HALF + pad;
-    let t = rayAABB(ox, oy, oz, dx, dy, dz, p.x - bh, p.y, p.z - bh, p.x + bh, p.y + HEAD_Y, p.z + bh, best);
+    // monsters carry their own size: hw half-width, bh body height, th total height
+    const bh = (p.hw || BODY_HALF) + pad, hh = (p.hw ? p.hw * 0.6 : HEAD_HALF) + pad, top = p.bh || HEAD_Y, full = p.th || HEAD_TOP;
+    let t = rayAABB(ox, oy, oz, dx, dy, dz, p.x - bh, p.y, p.z - bh, p.x + bh, p.y + top, p.z + bh, best);
     if (t >= 0 && t < best) { best = t; found = { t, player: p, head: false }; }
-    t = rayAABB(ox, oy, oz, dx, dy, dz, p.x - hh, p.y + HEAD_Y, p.z - hh, p.x + hh, p.y + HEAD_TOP + pad, p.z + hh, best);
+    t = rayAABB(ox, oy, oz, dx, dy, dz, p.x - hh, p.y + top, p.z - hh, p.x + hh, p.y + full + pad, p.z + hh, best);
     if (t >= 0 && t < best) { best = t; found = { t, player: p, head: true }; }
   }
   return found;

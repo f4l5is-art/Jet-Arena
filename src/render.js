@@ -4,6 +4,8 @@ import { MAP, HALF, EYE, cameraPos } from './core.js';
 import { Avatar } from './avatar.js';
 import { buildWorld, HORIZON, FOG_NEAR, FOG_FAR, CAM_FAR } from './world.js';
 import { fillGun } from './guns.js';
+import { buildIslandWorld } from './islandworld.js';
+import { MonsterViews } from './monsters.js';
 
 
 export class Renderer {
@@ -27,6 +29,7 @@ export class Renderer {
     this.camPos = new THREE.Vector3();
     this.buildWorld();
     this.initPuffs();
+    this.mons = new MonsterViews(this);
     this.initViewmodel();
     this.resize();
     addEventListener('resize', () => this.resize());
@@ -43,8 +46,32 @@ export class Renderer {
     if (this.vmCam) { this.vmCam.aspect = innerWidth / innerHeight; this.vmCam.updateProjectionMatrix(); }
   }
 
+  // Each map's scenery is built once and kept; switching maps just shows one set and hides the other.
+  capture(build) {
+    const before = new Set(this.scene.children);
+    const res = build();
+    return { res, objs: this.scene.children.filter((c) => !before.has(c)), fog: this.scene.fog, bg: this.scene.background };
+  }
+
+  setMapKind(kind) {
+    if (kind === this.kind) return;
+    if (!this.worlds[kind]) this.worlds[kind] = this.capture(() => buildIslandWorld(this.scene));
+    for (const [k, w] of Object.entries(this.worlds)) for (const o of w.objs) o.visible = k === kind;
+    const w = this.worlds[kind];
+    this.scene.fog = w.fog; this.scene.background = w.bg; this.world = w.res; this.kind = kind;
+    this.mons.clear();
+  }
+
+  // a fireball where a hisser blew up
+  boom(x, y, z) {
+    for (let i = 0; i < 16; i++) this.puff(x + (Math.random() - 0.5) * 2, y + 0.4 + Math.random() * 1.6, z + (Math.random() - 0.5) * 2, (Math.random() - 0.5) * 7, 2 + Math.random() * 4, (Math.random() - 0.5) * 7, 0.4 + Math.random() * 0.5, 0.45 + Math.random() * 0.35);
+    const d = Math.hypot(x - this.cam.position.x, z - this.cam.position.z);
+    this.addShake(Math.max(0, 0.32 - d * 0.012));
+  }
+
   buildWorld() {
-    this.world = buildWorld(this.scene);
+    this.worlds = { arena: this.capture(() => { this.world = buildWorld(this.scene); return this.world; }) };
+    this.kind = 'arena';
     this.tracerGeo = new THREE.BoxGeometry(0.04, 0.04, 1);
     this.tracerMat = new THREE.MeshBasicMaterial({ color: 0xffe9a3 });
   }
@@ -244,7 +271,8 @@ export class Renderer {
       }
     }
     if (this.debugCam) { const d = this.debugCam; this.cam.position.set(d[0], d[1], d[2]); this.cam.lookAt(d[3], d[4], d[5]); }
-    this.world.update(this.cam.position, dt);
+    this.world.update(this.cam.position, dt, view.sv);
+    this.mons.update(view.sv, dt);
     this.gl.clear();
     this.gl.render(this.scene, this.cam);
     if (this.vm.visible) { this.gl.clearDepth(); this.gl.render(this.vmScene, this.vmCam); }

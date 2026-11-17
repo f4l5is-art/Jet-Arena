@@ -231,7 +231,7 @@ function makeGroundTexture() {
 }
 
 // ------------------------------------------------------------------ vertex-coloured scenery pieces
-function part(geo, color, m, jitter = 0.08) {
+export function part(geo, color, m, jitter = 0.08) {
   const g = geo.index ? geo.toNonIndexed() : geo.clone();
   g.deleteAttribute('uv');
   g.applyMatrix4(m);
@@ -243,7 +243,7 @@ function part(geo, color, m, jitter = 0.08) {
   return g;
 }
 const MAT4 = new THREE.Matrix4(), Q = new THREE.Quaternion(), V = new THREE.Vector3(), S = new THREE.Vector3(), EU = new THREE.Euler();
-const place = (x, y, z, sx, sy, sz, ry = 0) => MAT4.compose(V.set(x, y, z), Q.setFromEuler(EU.set(0, ry, 0)), S.set(sx, sy, sz)).clone();
+export const place = (x, y, z, sx, sy, sz, ry = 0) => MAT4.compose(V.set(x, y, z), Q.setFromEuler(EU.set(0, ry, 0)), S.set(sx, sy, sz)).clone();
 
 const SNOW = new THREE.Color(0xeef3f8);
 function buildDecor() {
@@ -290,7 +290,7 @@ function buildDecor() {
 }
 
 // ------------------------------------------------------------------ sky
-function buildSky(scene) {
+export function buildSky(scene) {
   const g = new THREE.SphereGeometry(190, 20, 12);
   const top = new THREE.Color(0x4a8fd6), mid = new THREE.Color(0x9cc6ea), hor = new THREE.Color(HORIZON);
   const pos = g.attributes.position, col = new Float32Array(pos.count * 3), c = new THREE.Color();

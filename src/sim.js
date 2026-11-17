@@ -1,7 +1,8 @@
 // Host-authoritative game simulation: players, combat, scoring, respawn.
 import {
-  TICK, EYE, HP_MAX, MAP, WEAPONS, SNIPER, newBody, moveStep, rayWorld, aimDir, aimShot, rayPlayers, spreadOf, adsSpeed,
+  TICK, EYE, HP_MAX, MAP, WEAPONS, SNIPER, newBody, moveStep, rayWorld, aimDir, aimShot, rayPlayers, spreadOf, adsSpeed, setMapKind,
 } from './core.js';
+import { Survival, monTarget } from './survival.js';
 import { botThink } from './bots.js';
 
 const RESPAWN = 3;
@@ -12,8 +13,10 @@ const r2 = (n) => Math.round(n * 100) / 100;
 export class Game {
   constructor(opts = {}) {
     this.rng = opts.rng || Math.random;
-    this.scoreLimit = opts.scoreLimit || 20;
-    this.timeLimit = opts.timeLimit || 300;
+    this.mode = opts.mode === 'survival' ? 'survival' : 'arena';
+    setMapKind(this.mode === 'survival' ? 'island' : 'arena'); // the map every player and monster collides with
+    this.scoreLimit = this.mode === 'survival' ? 1e9 : (opts.scoreLimit || 20);
+    this.timeLimit = this.mode === 'survival' ? 1e9 : (opts.timeLimit || 300);
     this.players = new Map();
     this.events = [];
     this.time = 0;
@@ -24,6 +27,7 @@ export class Game {
     this.winner = 0;
     this.restartAt = 0;
     this.rosterDirty = true;
+    this.surv = this.mode === 'survival' ? new Survival(this) : null;
   }
 
   addPlayer(name, bot = false) {
@@ -32,7 +36,7 @@ export class Game {
       id, name: String(name || 'Player').slice(0, 14), bot, color: COLORS[(id - 1) % COLORS.length],
       body: newBody(), yaw: 0, pitch: 0, hp: HP_MAX, alive: false, respawnAt: 0,
       weapon: 1, mags: WEAPONS.map((w) => w.mag), cool: 0, reloadLeft: 0, lastHit: -99,
-      kills: 0, deaths: 0, wantFire: false, fireHeld: false, bloom: 0,
+      kills: 0, deaths: 0, wantFire: false, fireHeld: false, bloom: 0, cans: 0,
       inp: { mx: 0, mz: 0, yaw: 0, pitch: 0, jet: false, fire: false, rl: false, sw: -1, jump: false, ads: false, spd: 1, fp: false },
       ai: bot ? { target: 0, think: 0, strafe: 1, strafeT: 0, stuckT: 0, lx: 0, lz: 0, wp: null } : null,
     };
@@ -73,7 +77,7 @@ export class Game {
       if (d > bestD) { bestD = d; best = s; }
     }
     p.body = newBody(best[0], best[1], best[2]);
-    p.hp = HP_MAX; p.alive = true; p.reloadLeft = 0; p.cool = 0.5;
+    p.hp = HP_MAX; p.alive = true; p.reloadLeft = 0; p.cool = 0.5; p.cans = 0;
     p.mags = WEAPONS.map((w) => w.mag);
     p.lastHit = this.time;
     p.yaw = Math.atan2(best[0], best[2]); // face the arena centre
@@ -82,6 +86,7 @@ export class Game {
 
   resetMatch() {
     this.over = false; this.winner = 0; this.matchStart = this.time;
+    if (this.surv) this.surv.reset();
     for (const p of this.players.values()) { p.kills = 0; p.deaths = 0; this.respawn(p); }
     this.rosterDirty = true;
     this.events.push(['reset']);
@@ -115,8 +120,9 @@ export class Game {
       i.sw = -1;
       if (i.rl) { this.startReload(p); i.rl = false; }
       this.combat(p, i);
-      if (p.hp < HP_MAX && this.time - p.lastHit > REGEN_DELAY) p.hp = Math.min(HP_MAX, p.hp + 8 * TICK);
+      if (p.hp < HP_MAX && this.time - p.lastHit > (this.surv ? 6 : REGEN_DELAY)) p.hp = Math.min(HP_MAX, p.hp + (this.surv ? 2 : 8) * TICK);
     }
+    if (this.surv) this.surv.tick();
     if (this.time - this.matchStart >= this.timeLimit) this.endMatch();
   }
 
@@ -149,7 +155,9 @@ export class Game {
     const b = p.body;
     const ex = b.x, ey = b.y + EYE, ez = b.z;
     const list = [];
-    for (const o of this.players.values()) if (o.alive) list.push({ id: o.id, x: o.body.x, y: o.body.y, z: o.body.z, alive: true });
+    // survival is co-op: shots only ever hit monsters
+    if (this.surv) for (const m of this.surv.mons) list.push(monTarget(m));
+    else for (const o of this.players.values()) if (o.alive) list.push({ id: o.id, x: o.body.x, y: o.body.y, z: o.body.z, alive: true });
     // Camera model: scoped sniper and bots aim straight from the eye; everyone else aims through the
     // third-person camera (aimShot makes the bullet land exactly where the crosshair points).
     const scoped = p.weapon === SNIPER && p.inp.ads;
@@ -171,7 +179,9 @@ export class Game {
         const mx = ex + right[0] * 0.14 + d[0] * 0.9, my = ey - 0.27 + d[1] * 0.9, mz = ez + right[1] * 0.14 + d[2] * 0.9;
         this.events.push(['s', p.id, r2(mx), r2(my), r2(mz), r2(ex + d[0] * tHit), r2(ey + d[1] * tHit), r2(ez + d[2] * tHit)]);
       }
-      if (hit) {
+      if (hit && hit.player.mon) {
+        this.surv.hitMonster(hit.player.mon, p, Math.round(w.dmg * (hit.head ? 1.5 : 1)), hit.head);
+      } else if (hit) {
         const victim = this.players.get(hit.player.id), head = hit.head;
         const push = w.dmg * 0.045; // heavier guns shove harder; a shotgun blast really moves you
         victim.body.kx += d[0] * push; victim.body.kz += d[2] * push;
@@ -208,15 +218,16 @@ export class Game {
   snapshot() {
     return {
       t: r2(this.time),
-      left: Math.max(0, Math.round(this.timeLimit - (this.time - this.matchStart))),
+      left: this.surv ? Math.max(0, Math.ceil(this.surv.snap().end)) : Math.max(0, Math.round(this.timeLimit - (this.time - this.matchStart))),
       over: this.over ? this.winner : 0,
       lim: this.scoreLimit,
       p: [...this.players.values()].map((p) => [
         p.id, r2(p.body.x), r2(p.body.y), r2(p.body.z), r2(p.yaw), r2(p.pitch),
         Math.ceil(p.hp), p.weapon, p.alive ? 1 : 0, p.body.thrusting ? 1 : 0,
         p.mags[p.weapon], Math.round(p.body.fuel), p.kills, p.deaths, r2(p.reloadLeft),
-        r2(p.body.vx), r2(p.body.vy), r2(p.body.vz), p.body.ground ? 1 : 0, Math.round(p.bloom * 10000) / 10000,
+        r2(p.body.vx), r2(p.body.vy), r2(p.body.vz), p.body.ground ? 1 : 0, Math.round(p.bloom * 10000) / 10000, p.cans,
       ]),
+      sv: this.surv ? this.surv.snap() : undefined,
     };
   }
 

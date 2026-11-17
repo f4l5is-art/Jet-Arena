@@ -89,12 +89,27 @@ button.big{font-size:24px;letter-spacing:4px;padding:16px}
   .qs{display:grid;grid-template-columns:1fr 1fr;gap:0 14px}
   .lb-right h1{font-size:30px}
 }
-@media (max-height:480px) and (orientation:landscape){
+@media (max-height:560px) and (orientation:landscape){
   .lb{gap:2px 14px}.lb-right h1{font-size:30px}.lb-right .sub{margin-bottom:6px}
-  button.big{font-size:20px;padding:11px}.lb-right button{margin-top:6px;padding:10px}
+  button.big{font-size:20px;padding:10px}.lb-right button{margin-top:6px;padding:9px}.lb-right button.surv{padding:7px}
   .qs{margin-top:8px}.qs>div{margin-bottom:4px}.brand img{width:30px;height:30px}
   .wstat{min-height:18px}.lb-foot,.note,.cap{display:none}.wchips button{padding:6px 12px}
 }
+
+
+/* SURVIVAL */
+button.surv{background:linear-gradient(135deg,#5b2fd0,#8a3df0);color:#fff;font-size:17px;letter-spacing:2px}
+button.surv small{display:block;font-size:10px;letter-spacing:1px;font-weight:600;opacity:.85;margin-top:1px}
+#sv{display:none;margin-top:3px}
+.survival #sv{display:block}
+.survival #board{display:none}
+.svb{display:flex;align-items:center;gap:5px;justify-content:center;margin-top:2px}
+.svb .bar{width:96px;height:7px;border-radius:4px;background:rgba(0,0,0,.45);overflow:hidden}
+.svb .bar i{display:block;height:100%;width:100%}
+#svfuel{background:#ffd23a}#svhp{background:#ef476f}
+#svcans{font-size:13px;min-height:16px;color:#ffd23a}
+#note{position:fixed;left:0;right:0;top:20%;text-align:center;font-size:20px;font-weight:800;text-shadow:0 2px 8px #000;pointer-events:none;opacity:0;transition:opacity .4s}
+#note.on{opacity:1}
 
 /* HUD */
 #hud{position:fixed;inset:0;pointer-events:none;display:none;z-index:3} /* above the touch zones, so HUD buttons are tappable */
@@ -180,7 +195,9 @@ button.big{font-size:24px;letter-spacing:4px;padding:16px}
 <div id="hud">
   <div id="vig"></div><div id="cross"><i></i><i></i><i></i><i></i><b></b></div><div id="hitm"></div>
   <div class="hbar"><div class="bar" id="hpbar"><i id="hp"></i></div><div class="bar fuel" id="fuelbar"><i id="fuel"></i></div></div>
-  <div id="top"><span id="timer">5:00</span><small id="goal"></small></div>
+  <div id="top"><span id="timer">5:00</span><small id="goal"></small>
+    <div id="sv"><div class="svb"><span>💡</span><div class="bar"><i id="svfuel"></i></div></div><div class="svb"><span>🗼</span><div class="bar"><i id="svhp"></i></div></div><div id="svcans"></div></div></div>
+  <div id="note"></div>
   <div id="board"></div>
   <div id="feed"></div>
   <div id="ammo"><small id="wname">SMG</small><big id="ammon">30</big></div>
@@ -225,6 +242,7 @@ button.big{font-size:24px;letter-spacing:4px;padding:16px}
     <p class="sub">Jetpack gunfights.</p>
     <button class="pri big" id="b-solo">PLAY</button>
     <small class="cap">vs bots</small>
+    <button class="surv" id="b-survive">SURVIVE <small>island · co-op · night</small></button>
     <button class="alt" id="b-online">Online lobby</button>
     <button id="b-hotspot">Hotspot <span class="tag">beta</span></button>
     <div class="note" id="install"></div>
@@ -242,6 +260,8 @@ button.big{font-size:24px;letter-spacing:4px;padding:16px}
   <h2>Online lobby</h2>
   <label for="server">Server</label>
   <input type="url" id="server" autocomplete="off" autocapitalize="off">
+  <label for="o-mode">Game mode</label>
+  <select id="o-mode"><option value="arena">Arena (everyone vs everyone)</option><option value="survival">Island survival (co-op)</option></select>
   <button class="pri" id="o-host">Create room</button>
   <label for="code">Join with a room code</label>
   <div class="row"><input type="text" id="code" maxlength="4" placeholder="ABCD" autocapitalize="characters" autocomplete="off" style="text-transform:uppercase"><button id="o-join" style="margin:0">Join</button></div>
@@ -257,8 +277,9 @@ button.big{font-size:24px;letter-spacing:4px;padding:16px}
   <div class="note">Friends join with this code:</div>
   <div class="code" id="l-code">----</div>
   <div class="plist" id="l-players"></div>
-  <label for="l-bots">Arena size: <span id="l-botsn">5</span> players (bots fill empty slots)</label>
-  <input type="range" id="l-bots" min="2" max="8" value="5">
+  <div id="l-botsrow"><label for="l-bots">Arena size: <span id="l-botsn">5</span> players (bots fill empty slots)</label>
+  <input type="range" id="l-bots" min="2" max="8" value="5"></div>
+  <div class="note" id="l-svnote" style="display:none">Island survival: defend the lighthouse together for three nights until the rescue boat arrives.</div>
   <button class="pri" id="l-start">Start match</button>
   <button class="ghost" id="l-leave">Close room</button>
 </div></div>

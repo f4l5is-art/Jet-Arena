@@ -10,6 +10,7 @@
 //   north/south edge : watchtowers
 //   everywhere: crates, sandbags, concrete barriers, barrels. Mirrored so no side is unfair.
 
+import { ISLAND } from './island.js';
 export const HALF = 50;
 const R = 0.4, H = 1.8; // player size, for spawn validation
 
@@ -156,4 +157,14 @@ for (const sx of [-1, 1]) for (const sz of [-1, 1]) candidates.push([sx * 31, 6.
 for (const sz of [-1, 1]) candidates.push([0, 7.8, sz * 42]);                                         // watchtowers
 export const spawns = candidates.filter(([x, y, z]) => bodyFree(x, y, z));
 
-export const MAP = { boxes, decor, pads, spawns, half: HALF };
+// The arena data, kept aside: survival swaps the active map (see setMapKind), and `boxes` etc. are re-used in place.
+const ARENA = { boxes: [...boxes], decor: [...decor], pads: [...pads], spawns: [...spawns], half: HALF, radius: 0, kind: 'arena' };
+export const MAP = { boxes, decor, pads, spawns, half: HALF, radius: 0, kind: 'arena' };
+
+// Switch the active map ('arena' or 'island'). Every module reads MAP at call time, so this takes effect everywhere.
+export function setMapKind(kind) {
+  const d = kind === 'island' ? ISLAND : ARENA;
+  if (MAP.kind === d.kind) return;
+  for (const k of ['boxes', 'decor', 'pads', 'spawns']) { MAP[k].length = 0; MAP[k].push(...d[k]); }
+  MAP.half = d.half; MAP.radius = d.radius; MAP.kind = d.kind;
+}

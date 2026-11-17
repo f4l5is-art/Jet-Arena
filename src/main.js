@@ -1,6 +1,8 @@
 import { WEAPONS, SNIPER, BASE_FOV, aimedEnemy, spreadOf, adsFov } from './core.js';
 import { Renderer } from './render.js';
 import { LobbyStage } from './lobby.js';
+import { MONS } from './survival.js';
+import { setMapKind } from './core.js';
 import { Input } from './input.js';
 import { HostSession, ClientSession } from './session.js';
 import { HostNet, hostOnline, joinOnline, listRooms, hotspotJoin } from './net.js';
@@ -112,6 +114,8 @@ function startGame(s, { reset = false } = {}) {
   s.onClosed = (why) => { leave(); toast(why || 'Disconnected'); };
   s.fx.length = 0;
   s.fx.push(onEvent);
+  renderer.setMapKind(s.mode === 'survival' ? 'island' : 'arena');
+  document.body.classList.toggle('survival', s.mode === 'survival');
   renderer.clearPlayers();
   if (reset && s.game) s.game.resetMatch();
   input.reset();
@@ -135,7 +139,8 @@ function leave() {
   stopScan();
   session = null; playing = false; paused = false;
   input.enabled = false; input.reset();
-  document.body.classList.remove('playing', 'scoped');
+  document.body.classList.remove('playing', 'scoped', 'survival');
+  setMapKind('arena');
   $('hud').classList.remove('on');
   if (document.fullscreenElement) document.exitFullscreen?.().catch(() => {});
   show('s-menu');
@@ -175,6 +180,11 @@ document.addEventListener('pointerlockchange', () => { if (!document.pointerLock
 $('b-solo').onclick = () => {
   initAudio();
   startGame(new HostSession({ name: myName(), bots: 5 }), { reset: true });
+};
+
+$('b-survive').onclick = () => {
+  initAudio();
+  startGame(new HostSession({ name: myName(), bots: 0, mode: 'survival' }), { reset: true });
 };
 
 // ------------------------------------------------------------------ online
@@ -225,8 +235,10 @@ $('o-host').onclick = async () => {
   try {
     await wake();
     const net = await hostOnline(serverUrl(), myName(), true);
-    const s = new HostSession({ name: myName(), bots: 4, net });
+    const mode = $('o-mode').value;
+    const s = new HostSession({ name: myName(), bots: mode === 'survival' ? 0 : 4, net, mode });
     session = s;
+    $('l-botsrow').style.display = mode === 'survival' ? 'none' : ''; $('l-svnote').style.display = mode === 'survival' ? '' : 'none';
     s.onClosed = (why) => { leave(); toast(why); };
     $('l-code').textContent = net.code;
     $('l-bots').value = 5; $('l-botsn').textContent = '5';
@@ -372,10 +384,27 @@ function onEvent(e) {
     renderer.hit(e[1]);
     if (e[2] === me) { flash($('hitm'), e[4] ? 'head' : ''); (e[4] ? sfx.headshot : sfx.hit)(); }
     if (e[1] === me) { flash($('vig')); sfx.hurt(); renderer.addShake(0.08); }
+  } else if (e[0] === 'mh') {
+    renderer.mons.flash(e[1]);
+    if (e[2] === me) { flash($('hitm'), e[4] ? 'head' : ''); (e[4] ? sfx.headshot : sfx.hit)(); }
+  } else if (e[0] === 'mk') {
+    if (e[2] === me) sfx.kill();
+  } else if (e[0] === 'boom') {
+    renderer.boom(e[1], e[2], e[3]); sfx.shot(2, true);
+  } else if (e[0] === 'mimic') {
+    note('It was a MIMIC!', 1800); renderer.addShake(0.12); sfx.hurt();
+  } else if (e[0] === 'phase') {
+    if (e[1]) note(`🌑 Night ${e[2]} falls… keep the light burning`, 3500); else note(`🌅 Dawn of day ${e[2] + 1}`, 3000);
+  } else if (e[0] === 'drop') {
+    note('📦 Supply drop incoming!', 2200);
+  } else if (e[0] === 'pk') {
+    if (e[1] === me) note(e[2] === 0 ? '⛽ Fuel can: take it to the lighthouse' : '➕ Medkit: +60 health', 2400);
+  } else if (e[0] === 'dep') {
+    note('💡 Lighthouse refuelled', 2000);
   } else if (e[0] === 'k') {
     const w = WEAPONS[e[3]] ? WEAPONS[e[3]].name : '';
     const d = document.createElement('div');
-    d.textContent = `${nameOf(e[1])}  ➜  ${nameOf(e[2])}  (${w})`;
+    d.textContent = e[1] === 0 ? `${nameOf(e[2])} was torn apart` : `${nameOf(e[1])}  ➜  ${nameOf(e[2])}  (${w})`;
     if (e[1] === me || e[2] === me) d.style.background = 'rgba(255,159,28,.55)';
     feed.appendChild(d);
     setTimeout(() => d.remove(), 4600);
@@ -383,6 +412,11 @@ function onEvent(e) {
     if (e[1] === me) sfx.kill();
     if (e[2] === me) sfx.die();
   }
+}
+let noteT = 0;
+function note(msg, ms = 2600) {
+  const el = $('note'); el.textContent = msg; el.classList.add('on');
+  clearTimeout(noteT); noteT = setTimeout(() => el.classList.remove('on'), ms);
 }
 function flash(el, cls) {
   el.classList.remove('head'); if (cls) el.classList.add(cls);
@@ -404,11 +438,19 @@ function hud(dt) {
   $('wname').textContent = w.name;
   $('ammon').textContent = me.reload > 0 ? 'RELOAD' : me.ammo + ' / ' + w.mag;
   if (me.reload > 0 && !reloadSfx) { sfx.reload(); reloadSfx = 1; } else if (me.reload <= 0) reloadSfx = 0;
-  const t = v.left;
-  $('timer').textContent = Math.floor(t / 60) + ':' + String(t % 60).padStart(2, '0');
-  $('goal').textContent = 'First to ' + v.lim + ' kills';
+  const t = v.left, sv = v.sv;
+  if (sv) {
+    $('timer').textContent = (sv.dark > 0.5 ? '🌑 Night ' : '☀️ Day ') + sv.day + ' / 3';
+    $('goal').textContent = 'Rescue boat in ' + Math.floor(t / 60) + ':' + String(t % 60).padStart(2, '0');
+    $('svfuel').style.width = Math.max(0, Math.min(100, sv.fuel)) + '%';
+    $('svhp').style.width = Math.max(0, Math.min(100, sv.hp / 6)) + '%';
+    $('svcans').textContent = me.cans ? '⛽ ×' + me.cans + ' → bring it to the lighthouse' : '';
+  } else {
+    $('timer').textContent = Math.floor(t / 60) + ':' + String(t % 60).padStart(2, '0');
+    $('goal').textContent = 'First to ' + v.lim + ' kills';
+  }
   $('net').textContent = session.isHost ? (session.net ? 'HOST' : '') : v.ping + ' ms';
-  $('banner').innerHTML = me.alive ? '' : 'Respawning…<small>Take cover, then jump back in</small>';
+  $('banner').innerHTML = me.alive ? '' : (sv ? 'You fell…<small>You will wash ashore at the lighthouse in a moment</small>' : 'Respawning…<small>Take cover, then jump back in</small>');
   wasAlive = me.alive;
 
   boardT -= dt;
@@ -424,8 +466,9 @@ function hud(dt) {
       d.append(a, b); bd.appendChild(d);
     }
     if (v.over && !wasOver) {
-      sfx[v.over === me.id ? 'win' : 'die']();
-      $('e-title').textContent = v.over === me.id ? 'You win! 🏆' : nameOf(v.over) + ' wins';
+      const won = sv ? v.over === 1 : v.over === me.id;
+      sfx[won ? 'win' : 'die']();
+      $('e-title').textContent = sv ? (won ? 'Rescued! 🚤 You survived three nights' : 'The lighthouse fell… 🌑') : (won ? 'You win! 🏆' : nameOf(v.over) + ' wins');
       const l = $('e-list'); l.textContent = '';
       for (const p of sorted) {
         const d = document.createElement('div');
@@ -467,7 +510,7 @@ function frame(now) {
       let locked = false, spread = w.spread;
       if (me && me.alive) {
         spread = spreadOf(w, ads, Math.hypot(me.vx || 0, me.vz || 0), !me.gr || me.thr, me.bloom || 0);
-        locked = aimedEnemy(me, session.view.players, inp.yaw, inp.pitch, w.range, scoped || inp.fp);
+        locked = aimedEnemy(me, session.view.sv ? session.view.sv.mons.map((m) => ({ id: 1000 + m.id, x: m.x, y: m.y, z: m.z, alive: true, hw: MONS[m.kind].hw, bh: MONS[m.kind].bh, th: MONS[m.kind].h })) : session.view.players, inp.yaw, inp.pitch, w.range, scoped || inp.fp);
       }
       // Auto-fire: shoot while the crosshair is on an enemy. The sniper only auto-fires when scoped AND
       // steady, so the shot it takes is an accurate one. Pulsed so single-shot weapons keep firing.

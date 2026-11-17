@@ -1,7 +1,8 @@
 // Sessions give the renderer/HUD one uniform `view`, whether we are playing solo,
 // hosting (the host runs the simulation) or joined to someone else's game.
 import { Game } from './sim.js';
-import { TICK, newBody, moveStep, adsSpeed } from './core.js';
+import { TICK, newBody, moveStep, adsSpeed, setMapKind } from './core.js';
+import { parseSv } from './survival.js';
 
 const BOT_NAMES = ['Rex', 'Nova', 'Bolt', 'Kira', 'Zed', 'Mako', 'Pixel', 'Jinx', 'Echo', 'Dash'];
 const lerp = (a, b, t) => a + (b - a) * t;
@@ -10,7 +11,7 @@ const lerpAngle = (a, b, t) => { let d = b - a; while (d > Math.PI) d -= 2 * Mat
 function parseRow(r) {
   return {
     id: r[0], x: r[1], y: r[2], z: r[3], yaw: r[4], pitch: r[5], hp: r[6], weapon: r[7], alive: !!r[8], thr: !!r[9],
-    ammo: r[10], fuel: r[11], kills: r[12], deaths: r[13], reload: r[14], vx: r[15], vy: r[16], vz: r[17], gr: !!r[18], bloom: r[19] || 0,
+    ammo: r[10], fuel: r[11], kills: r[12], deaths: r[13], reload: r[14], vx: r[15], vy: r[16], vz: r[17], gr: !!r[18], bloom: r[19] || 0, cans: r[20] || 0,
   };
 }
 
@@ -18,7 +19,8 @@ class Base {
   constructor() {
     this.fx = []; // listeners for events: ['s', ...] shots, ['h', ...] hits, ['k', ...] kills
     this.roster = new Map();
-    this.view = { players: [], me: null, left: 0, over: 0, lim: 20, ping: 0 };
+    this.view = { players: [], me: null, left: 0, over: 0, lim: 20, ping: 0, sv: null, mode: 'arena' };
+    this.mode = 'arena';
     this.myId = 0;
     this.onClosed = () => {};
   }
@@ -30,10 +32,12 @@ class Base {
 
 // ---------------------------------------------------------------- host / solo
 export class HostSession extends Base {
-  constructor({ name = 'Player', bots = 5, scoreLimit = 20, timeLimit = 300, net = null } = {}) {
+  constructor({ name = 'Player', bots = 5, scoreLimit = 20, timeLimit = 300, net = null, mode = 'arena' } = {}) {
     super();
     this.isHost = true;
-    this.game = new Game({ scoreLimit, timeLimit });
+    this.mode = mode === 'survival' ? 'survival' : 'arena';
+    this.view.mode = this.mode;
+    this.game = new Game({ scoreLimit, timeLimit, mode: this.mode });
     this.myId = this.game.addPlayer(name);
     this.botTarget = bots + 1; // total players we try to keep in the arena
     this.net = net;
@@ -48,7 +52,7 @@ export class HostSession extends Base {
         this.peers.set(pid, id);
         this.balance();
         this.syncRoster();
-        net.sendTo(pid, { k: 'hello', id, roster: this.game.roster(), lim: scoreLimit });
+        net.sendTo(pid, { k: 'hello', id, roster: this.game.roster(), lim: scoreLimit, mode: this.mode });
       };
       net.onLeave = (pid) => { const id = this.peers.get(pid); if (id) this.game.removePlayer(id); this.peers.delete(pid); this.balance(); this.syncRoster(); };
       net.onMsg = (pid, m) => {
@@ -95,13 +99,15 @@ export class HostSession extends Base {
     const v = this.view;
     v.players = [];
     for (const p of g.players.values()) {
-      const o = { id: p.id, x: p.body.x, y: p.body.y, z: p.body.z, yaw: p.yaw, pitch: p.pitch, hp: Math.ceil(p.hp), weapon: p.weapon, alive: p.alive, thr: p.body.thrusting, kills: p.kills, deaths: p.deaths, ammo: p.mags[p.weapon], fuel: Math.round(p.body.fuel), reload: p.reloadLeft, vx: p.body.vx, vy: p.body.vy, vz: p.body.vz, gr: p.body.ground, bloom: p.bloom };
+      const o = { id: p.id, x: p.body.x, y: p.body.y, z: p.body.z, yaw: p.yaw, pitch: p.pitch, hp: Math.ceil(p.hp), weapon: p.weapon, alive: p.alive, thr: p.body.thrusting, kills: p.kills, deaths: p.deaths, ammo: p.mags[p.weapon], fuel: Math.round(p.body.fuel), reload: p.reloadLeft, vx: p.body.vx, vy: p.body.vy, vz: p.body.vz, gr: p.body.ground, bloom: p.bloom, cans: p.cans };
       v.players.push(this.decorate(o));
       if (p.id === this.myId) v.me = o;
     }
     v.left = Math.max(0, Math.round(g.timeLimit - (g.time - g.matchStart)));
     v.over = g.over ? g.winner : 0;
     v.lim = g.scoreLimit;
+    v.sv = g.surv ? parseSv(g.surv.snap()) : null;
+    if (g.surv) v.left = v.sv.end;
   }
 
   close() { if (this.net) this.net.close(); }
@@ -127,7 +133,12 @@ export class ClientSession extends Base {
   }
 
   onMsg(m) {
-    if (m.k === 'hello') { this.myId = m.id; this.setRoster(m.roster); this.view.lim = m.lim; this.resolveReady(); }
+    if (m.k === 'hello') {
+      this.myId = m.id; this.setRoster(m.roster); this.view.lim = m.lim;
+      this.mode = m.mode === 'survival' ? 'survival' : 'arena'; this.view.mode = this.mode;
+      setMapKind(this.mode === 'survival' ? 'island' : 'arena'); // collide with the same map as the host
+      this.resolveReady();
+    }
     else if (m.k === 'roster') this.setRoster(m.r);
     else if (m.k === 's') {
       const rows = new Map(m.s.p.map((r) => [r[0], parseRow(r)]));
@@ -196,7 +207,7 @@ export class ClientSession extends Base {
       }
       v.players.push(this.decorate(o));
     }
-    if (this.last) { v.left = this.last.left; v.over = this.last.over; v.lim = this.last.lim; }
+    if (this.last) { v.left = this.last.left; v.over = this.last.over; v.lim = this.last.lim; v.sv = this.last.sv ? parseSv(this.last.sv) : null; }
   }
 
   close() { this.net.close(); }
