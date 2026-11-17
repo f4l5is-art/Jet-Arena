@@ -174,6 +174,23 @@ ok('snapshot rows round-trip', () => {
   assert.equal(g.snapshot().p[0].length, 21);
 });
 
+ok('relax mode: monsters never attack the lighthouse, but still hunt players', () => {
+  const g = new Game({ mode: 'relax', rng: seeded(9) }); const id = g.addPlayer('Rex'); const p = g.players.get(id), s = g.surv;
+  assert.equal(g.mode, 'survival'); assert.equal(g.relax, true);
+  s.t = DAY_LEN * 0.6; s.dropT = 1e9; s.spawnT = 1e9; s.fuel = 0;
+  p.body.x = 0; p.body.z = -40; // far away: nobody to hunt
+  s.spawnMon(DROWNED, 4, 0); s.spawnMon(HISSER, 5, 3);
+  run(g, 30);
+  assert.equal(s.hp, LH_HP, 'tower untouched');
+  assert.equal(s.mons.length, 2, 'the hisser did not blow up on the tower');
+  assert.ok(s.mons.some((m) => Math.hypot(m.b.x, m.b.z) > 8), 'they roam away');
+  assert.equal(parseSv(g.snapshot().sv).relax, true);
+  p.body.x = 15; p.body.z = 0; p.hp = 100; s.mons.forEach((m) => { m.hp = 1e6; });
+  const d = s.spawnMon(DROWNED, 24, 0); d.hp = 1e6;
+  run(g, 10);
+  assert.ok(p.hp < 100, 'still hunts players: hp ' + p.hp);
+});
+
 ok('an arena game afterwards puts the arena map back', () => {
   new Game({ rng: seeded(1) });
   assert.equal(MAP.kind, 'arena');

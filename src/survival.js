@@ -38,7 +38,7 @@ export const monTarget = (m) => ({ id: 1000 + m.id, x: m.b.x, y: m.b.y, z: m.b.z
 // Turn a snapshot's compact rows into objects (used by the host's own view and by joiners).
 export function parseSv(s) {
   return {
-    t: s.t, dark: s.dk, day: s.day, fuel: s.fu, hp: s.hp, lr: s.lr, end: s.end, rescue: !!s.resc,
+    t: s.t, relax: !!s.rx, dark: s.dk, day: s.day, fuel: s.fu, hp: s.hp, lr: s.lr, end: s.end, rescue: !!s.resc,
     mons: s.m.map((r) => ({ id: r[0], kind: r[1], x: r[2], y: r[3], z: r[4], yaw: r[5], hp: r[6], aux: r[7], burn: !!r[8] })),
     crates: s.c.map((r) => ({ id: r[0], kind: r[1], x: r[2], y: r[3], z: r[4] })),
   };
@@ -231,8 +231,14 @@ export class Survival {
       m.tgt = chase ? { p: near } : { lh: true };
     }
     const T = m.tgt && m.tgt.p && m.tgt.p.alive ? m.tgt.p.body : null;
-    const tx = T ? T.x : 0, tz = T ? T.z : 0, dx = tx - b.x, dz = tz - b.z, dist = Math.hypot(dx, dz);
-    const gap = T ? dist : dist - TOWER; // distance to the thing's surface
+    // Relax mode: the lighthouse is a safe haven. With no player to hunt, monsters wander the island and never go for it.
+    const roam = !T && g.relax;
+    if (roam && (!m.wp || Math.hypot(m.wp[0] - b.x, m.wp[1] - b.z) < 2.5)) {
+      const a = g.rng() * Math.PI * 2, r = 16 + g.rng() * 22;
+      m.wp = [Math.cos(a) * r, Math.sin(a) * r];
+    }
+    const tx = T ? T.x : roam ? m.wp[0] : 0, tz = T ? T.z : roam ? m.wp[1] : 0, dx = tx - b.x, dz = tz - b.z, dist = Math.hypot(dx, dz);
+    const gap = roam ? 1e9 : T ? dist : dist - TOWER; // distance to the thing's surface (never "in reach" while roaming)
     m.yaw = Math.atan2(-dx, -dz); i.yaw = m.yaw;
 
     let go = 1;
@@ -258,7 +264,7 @@ export class Survival {
     // walk (stuck against a wall? hop and sidestep)
     m.sideT -= TICK;
     i.mz = go; i.mx = m.sideT > 0 ? m.side * 0.8 : 0;
-    i.spd = (def.spd / 7) * slow * (go ? 1 : 0);
+    i.spd = (def.spd / 7) * slow * (go ? (roam ? 0.5 : 1) : 0);
     m.stuckT += TICK;
     if (m.stuckT >= 0.6) {
       if (go && Math.hypot(b.x - m.lx, b.z - m.lz) < 0.35) { i.jump = true; m.sideT = 0.8; m.side = g.rng() < 0.5 ? -1 : 1; }
@@ -276,14 +282,14 @@ export class Survival {
       const d = Math.hypot(p.body.x - m.b.x, p.body.z - m.b.z);
       if (d < 6.5) this.hurtPlayer(p, 10 + 55 * (1 - d / 6.5));
     }
-    if (Math.hypot(m.b.x, m.b.z) < TOWER + 6) { this.hp -= 140; g.events.push(['lh', Math.max(0, Math.round(this.hp))]); }
+    if (!g.relax && Math.hypot(m.b.x, m.b.z) < TOWER + 6) { this.hp -= 140; g.events.push(['lh', Math.max(0, Math.round(this.hp))]); }
   }
 
   // ---------------------------------------------------------------- snapshot (also used for the host's own view)
   snap() {
     const dark = darkness(this.t);
     return {
-      t: r2(this.t), dk: r2(dark), day: this.dayNo(), fu: Math.round(this.fuel * 10) / 10, hp: Math.max(0, Math.round(this.hp)),
+      t: r2(this.t), rx: this.g.relax ? 1 : 0, dk: r2(dark), day: this.dayNo(), fu: Math.round(this.fuel * 10) / 10, hp: Math.max(0, Math.round(this.hp)),
       lr: r2(lightRadius(this.fuel)), end: Math.max(0, Math.ceil(END_T - this.t)), resc: this.rescue ? 1 : 0,
       m: this.mons.map((m) => [m.id, m.kind, r2(m.b.x), r2(m.b.y), r2(m.b.z), r2(m.yaw), Math.ceil(m.hp), m.aux, m.burn ? 1 : 0]),
       c: this.crates.map((c) => [c.id, c.kind, r2(c.x), r2(c.y), r2(c.z)]),

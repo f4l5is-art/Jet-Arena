@@ -106,7 +106,8 @@ button.surv small{display:block;font-size:10px;letter-spacing:1px;font-weight:60
 .svb{display:flex;align-items:center;gap:5px;justify-content:center;margin-top:2px}
 .svb .bar{width:96px;height:7px;border-radius:4px;background:rgba(0,0,0,.45);overflow:hidden}
 .svb .bar i{display:block;height:100%;width:100%}
-#svfuel{background:#ffd23a}#svhp{background:#ef476f}
+#svfuel{background:#ffd23a}
+.svm{margin:6px auto 0;width:100%}.svm button{flex:1;font-size:11px;padding:5px 4px}#svhp{background:#ef476f}
 #svcans{font-size:13px;min-height:16px;color:#ffd23a}
 #note{position:fixed;left:0;right:0;top:20%;text-align:center;font-size:20px;font-weight:800;text-shadow:0 2px 8px #000;pointer-events:none;opacity:0;transition:opacity .4s}
 #note.on{opacity:1}
@@ -196,7 +197,7 @@ button.surv small{display:block;font-size:10px;letter-spacing:1px;font-weight:60
   <div id="vig"></div><div id="cross"><i></i><i></i><i></i><i></i><b></b></div><div id="hitm"></div>
   <div class="hbar"><div class="bar" id="hpbar"><i id="hp"></i></div><div class="bar fuel" id="fuelbar"><i id="fuel"></i></div></div>
   <div id="top"><span id="timer">5:00</span><small id="goal"></small>
-    <div id="sv"><div class="svb"><span>💡</span><div class="bar"><i id="svfuel"></i></div></div><div class="svb"><span>🗼</span><div class="bar"><i id="svhp"></i></div></div><div id="svcans"></div></div></div>
+    <div id="sv"><div class="svb"><span>💡</span><div class="bar"><i id="svfuel"></i></div></div><div class="svb" id="svhprow"><span>🗼</span><div class="bar"><i id="svhp"></i></div></div><div id="svcans"></div></div></div>
   <div id="note"></div>
   <div id="board"></div>
   <div id="feed"></div>
@@ -243,6 +244,7 @@ button.surv small{display:block;font-size:10px;letter-spacing:1px;font-weight:60
     <button class="pri big" id="b-solo">PLAY</button>
     <small class="cap">vs bots</small>
     <button class="surv" id="b-survive">SURVIVE <small>island · co-op · night</small></button>
+    <div class="seg svm" id="svmode"><button data-v="0">Classic</button><button data-v="1">Relax · safe tower</button></div>
     <button class="alt" id="b-online">Online lobby</button>
     <button id="b-hotspot">Hotspot <span class="tag">beta</span></button>
     <div class="note" id="install"></div>
@@ -261,7 +263,7 @@ button.surv small{display:block;font-size:10px;letter-spacing:1px;font-weight:60
   <label for="server">Server</label>
   <input type="url" id="server" autocomplete="off" autocapitalize="off">
   <label for="o-mode">Game mode</label>
-  <select id="o-mode"><option value="arena">Arena (everyone vs everyone)</option><option value="survival">Island survival (co-op)</option></select>
+  <select id="o-mode"><option value="arena">Arena (everyone vs everyone)</option><option value="survival">Island survival (co-op)</option><option value="relax">Island relax (co-op, monsters never attack the tower)</option></select>
   <button class="pri" id="o-host">Create room</button>
   <label for="code">Join with a room code</label>
   <div class="row"><input type="text" id="code" maxlength="4" placeholder="ABCD" autocapitalize="characters" autocomplete="off" style="text-transform:uppercase"><button id="o-join" style="margin:0">Join</button></div>

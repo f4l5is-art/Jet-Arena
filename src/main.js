@@ -72,12 +72,12 @@ WEAPONS.forEach((w, i) => {
 pickLobbyWeapon(lobbyWeapon);
 // Quick settings around the soldier drive the same <select>s as the Settings screen.
 function syncSegs() {
-  document.querySelectorAll('.seg').forEach((seg) => {
+  document.querySelectorAll('.seg[data-sel]').forEach((seg) => {
     const v = $(seg.dataset.sel).value;
     seg.querySelectorAll('button').forEach((b) => b.classList.toggle('on', b.dataset.v === v));
   });
 }
-document.querySelectorAll('.seg').forEach((seg) => seg.querySelectorAll('button').forEach((b) => {
+document.querySelectorAll('.seg[data-sel]').forEach((seg) => seg.querySelectorAll('button').forEach((b) => {
   b.onclick = () => { const sel = $(seg.dataset.sel); sel.value = b.dataset.v; sel.dispatchEvent(new Event('input')); };
 }));
 for (const k of ['qual', 'cam3', 'auto', 'snd']) $(k).addEventListener('input', syncSegs);
@@ -182,9 +182,13 @@ $('b-solo').onclick = () => {
   startGame(new HostSession({ name: myName(), bots: 5 }), { reset: true });
 };
 
+let relaxOn = store.get('relax', '0') === '1';
+function syncRelax() { document.querySelectorAll('#svmode button').forEach((b) => b.classList.toggle('on', (b.dataset.v === '1') === relaxOn)); }
+document.querySelectorAll('#svmode button').forEach((b) => { b.onclick = () => { relaxOn = b.dataset.v === '1'; store.set('relax', relaxOn ? '1' : '0'); syncRelax(); }; });
+syncRelax();
 $('b-survive').onclick = () => {
   initAudio();
-  startGame(new HostSession({ name: myName(), bots: 0, mode: 'survival' }), { reset: true });
+  startGame(new HostSession({ name: myName(), bots: 0, mode: relaxOn ? 'relax' : 'survival' }), { reset: true });
 };
 
 // ------------------------------------------------------------------ online
@@ -236,9 +240,10 @@ $('o-host').onclick = async () => {
     await wake();
     const net = await hostOnline(serverUrl(), myName(), true);
     const mode = $('o-mode').value;
-    const s = new HostSession({ name: myName(), bots: mode === 'survival' ? 0 : 4, net, mode });
+    const s = new HostSession({ name: myName(), bots: mode === 'arena' ? 4 : 0, net, mode });
     session = s;
-    $('l-botsrow').style.display = mode === 'survival' ? 'none' : ''; $('l-svnote').style.display = mode === 'survival' ? '' : 'none';
+    $('l-botsrow').style.display = mode === 'arena' ? '' : 'none'; $('l-svnote').style.display = mode === 'arena' ? 'none' : '';
+    $('l-svnote').textContent = mode === 'relax' ? 'Island relax: monsters roam and attack players, but never the lighthouse. Survive three nights until the rescue boat arrives.' : 'Island survival: defend the lighthouse together for three nights until the rescue boat arrives.';
     s.onClosed = (why) => { leave(); toast(why); };
     $('l-code').textContent = net.code;
     $('l-bots').value = 5; $('l-botsn').textContent = '5';
@@ -441,9 +446,10 @@ function hud(dt) {
   const t = v.left, sv = v.sv;
   if (sv) {
     $('timer').textContent = (sv.dark > 0.5 ? '🌑 Night ' : '☀️ Day ') + sv.day + ' / 3';
-    $('goal').textContent = 'Rescue boat in ' + Math.floor(t / 60) + ':' + String(t % 60).padStart(2, '0');
+    $('goal').textContent = (sv.relax ? 'Relax · ' : '') + 'Rescue boat in ' + Math.floor(t / 60) + ':' + String(t % 60).padStart(2, '0');
     $('svfuel').style.width = Math.max(0, Math.min(100, sv.fuel)) + '%';
     $('svhp').style.width = Math.max(0, Math.min(100, sv.hp / 6)) + '%';
+    $('svhprow').style.display = sv.relax ? 'none' : '';
     $('svcans').textContent = me.cans ? '⛽ ×' + me.cans + ' → bring it to the lighthouse' : '';
   } else {
     $('timer').textContent = Math.floor(t / 60) + ':' + String(t % 60).padStart(2, '0');

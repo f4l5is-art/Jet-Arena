@@ -35,9 +35,10 @@ export class HostSession extends Base {
   constructor({ name = 'Player', bots = 5, scoreLimit = 20, timeLimit = 300, net = null, mode = 'arena' } = {}) {
     super();
     this.isHost = true;
-    this.mode = mode === 'survival' ? 'survival' : 'arena';
+    this.mode = mode === 'survival' || mode === 'relax' ? 'survival' : 'arena';
+    this.relax = mode === 'relax';
     this.view.mode = this.mode;
-    this.game = new Game({ scoreLimit, timeLimit, mode: this.mode });
+    this.game = new Game({ scoreLimit, timeLimit, mode: this.relax ? 'relax' : this.mode });
     this.myId = this.game.addPlayer(name);
     this.botTarget = bots + 1; // total players we try to keep in the arena
     this.net = net;

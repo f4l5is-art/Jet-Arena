@@ -13,7 +13,8 @@ const r2 = (n) => Math.round(n * 100) / 100;
 export class Game {
   constructor(opts = {}) {
     this.rng = opts.rng || Math.random;
-    this.mode = opts.mode === 'survival' ? 'survival' : 'arena';
+    this.relax = opts.mode === 'relax'; // survival where monsters never attack the lighthouse
+    this.mode = opts.mode === 'survival' || this.relax ? 'survival' : 'arena';
     setMapKind(this.mode === 'survival' ? 'island' : 'arena'); // the map every player and monster collides with
     this.scoreLimit = this.mode === 'survival' ? 1e9 : (opts.scoreLimit || 20);
     this.timeLimit = this.mode === 'survival' ? 1e9 : (opts.timeLimit || 300);
