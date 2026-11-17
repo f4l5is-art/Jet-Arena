@@ -3,7 +3,8 @@
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import { ISLAND, ISLAND_R, LH_TOP } from './island.js';
-import { buildSky, part, place, HORIZON } from './world.js';
+import { part, place, HORIZON, makeSun, shadowFlags, CLOUD_OCT } from './world.js';
+import { createSky } from './sky.js';
 
 const KIND_COLOR = {
   gallery: 0x7e8791, rail: 0xaab2bb, hut: 0x8a6a45, hutroof: 0x5a3a2a, crate: 0x9b6a3a, sandbag: 0xb8a77a,
@@ -100,15 +101,15 @@ export function buildIslandWorld(scene) {
   scene.fog = new THREE.Fog(HORIZON, 70, 190);
   const fog = scene.fog;
 
-  const hemi = new THREE.HemisphereLight(0xeaf4ff, 0x77705f, 1.7); scene.add(hemi);
-  const sun = new THREE.DirectionalLight(0xfff0d0, 1.7); sun.position.set(30, 60, 20); scene.add(sun);
+  const hemi = new THREE.HemisphereLight(0xcfe4ff, 0x8a8670, 1.55); scene.add(hemi);
+  const sunS = makeSun(scene, 2.3), sun = sunS.light;
   // night lights: a headlamp that follows the camera, and the lantern itself
   const lamp = new THREE.PointLight(0xffe2b0, 0, 26, 1.2); scene.add(lamp);
   const lantern = new THREE.PointLight(0xffe9b8, 0, 60, 1.1); lantern.position.set(0, LH_TOP + 1.8, 0); scene.add(lantern);
 
   // island: grass and sand disc with a lip, and the sea around it
   const ground = new THREE.Mesh(new THREE.CircleGeometry(ISLAND_R + 3, 64), new THREE.MeshLambertMaterial({ map: groundTexture() }));
-  ground.rotation.x = -Math.PI / 2; scene.add(ground);
+  ground.rotation.x = -Math.PI / 2; shadowFlags(ground, false, true); scene.add(ground);
   const lip = new THREE.Mesh(new THREE.CylinderGeometry(ISLAND_R + 3, ISLAND_R + 3, 0.9, 64, 1, true), new THREE.MeshLambertMaterial({ color: 0xb59f6a, side: THREE.DoubleSide }));
   lip.position.y = -0.45; scene.add(lip);
   const wtex = waterTexture();
@@ -117,7 +118,7 @@ export function buildIslandWorld(scene) {
   sea.rotation.x = -Math.PI / 2; sea.position.y = -0.9; scene.add(sea);
 
   const lit = new THREE.MeshLambertMaterial({ vertexColors: true, flatShading: true });
-  scene.add(new THREE.Mesh(scenery(), lit));
+  scene.add(shadowFlags(new THREE.Mesh(scenery(), lit)));
 
   // lantern glass and the two beams
   const glassMat = new THREE.MeshBasicMaterial({ color: 0xfff1b0 });
@@ -131,18 +132,8 @@ export function buildIslandWorld(scene) {
   const b2 = new THREE.Mesh(beamGeo, beamMat); b2.rotation.y = Math.PI; beams.add(b2);
   beams.position.set(0, LH_TOP + 1.5, 0); scene.add(beams);
 
-  // sky, stars and the rescue boat
-  const { sky, clouds } = buildSky(scene);
-  const sunDiscs = sky.children.slice();
-  const starPos = new Float32Array(260 * 3);
-  for (let i = 0; i < 260; i++) {
-    const a = Math.random() * Math.PI * 2, e = 0.08 + Math.random() * 1.4, r = 175;
-    starPos.set([Math.cos(a) * Math.cos(e) * r, Math.sin(e) * r, Math.sin(a) * Math.cos(e) * r], i * 3);
-  }
-  const sg = new THREE.BufferGeometry(); sg.setAttribute('position', new THREE.BufferAttribute(starPos, 3));
-  const starMat = new THREE.PointsMaterial({ color: 0xffffff, size: 2.2, sizeAttenuation: false, transparent: true, opacity: 0, fog: false, depthWrite: false, depthTest: false });
-  const stars = new THREE.Points(sg, starMat); stars.renderOrder = -9; stars.frustumCulled = false; sky.add(stars);
-
+  // sky (shader dome with its own stars and sun) and the rescue boat
+  const skyD = createSky(scene, 4);
   const boat = new THREE.Group();
   const hull = new THREE.Mesh(new THREE.BoxGeometry(3.2, 0.9, 8), new THREE.MeshLambertMaterial({ color: 0xf4f4f0 })); hull.position.y = 0.2; boat.add(hull);
   const stripe = new THREE.Mesh(new THREE.BoxGeometry(3.25, 0.25, 8.05), new THREE.MeshLambertMaterial({ color: 0xc8362d })); stripe.position.y = 0.3; boat.add(stripe);
@@ -158,25 +149,21 @@ export function buildIslandWorld(scene) {
     fins.push({ m: f, a: Math.random() * 6.28, r: ISLAND_R + 6 + Math.random() * 22, sp: (0.05 + Math.random() * 0.06) * (i % 2 ? 1 : -1) });
   }
 
-  const DAY_SKY = new THREE.Color(1, 1, 1), NIGHT_SKY = new THREE.Color(0.05, 0.075, 0.15), horizon = new THREE.Color(HORIZON);
-  const tmp = new THREE.Color();
-  let clock = 0;
+    let clock = 0;
 
   return {
+    sun: sunS,
+    setQuality(q) { sunS.setQuality(q); skyD.setDetail(CLOUD_OCT[q]); },
     update(camPos, dt, sv) {
       clock += dt;
       const dark = sv ? sv.dark : 0, fuel = sv ? sv.fuel : 0;
-      sky.position.copy(camPos);
-      clouds.position.set(camPos.x, 0, camPos.z); clouds.rotation.y += dt * 0.006;
-      // sky and fog share one tint so the horizon melts into the fog
-      tmp.copy(DAY_SKY).lerp(NIGHT_SKY, dark);
-      sky.material.color.copy(tmp); clouds.material.color.copy(tmp);
-      fog.color.copy(horizon).multiply(tmp); scene.background.copy(fog.color);
+      skyD.update(camPos, dt, dark);
+      sunS.follow(camPos);
+      // sky and fog share one colour so the horizon melts into the fog
+      fog.color.copy(skyD.horizon); scene.background.copy(fog.color);
       fog.near = lerp(70, 9, dark); fog.far = lerp(190, 85, dark);
-      hemi.intensity = lerp(1.7, 0.32, dark); hemi.color.setRGB(lerp(0.92, 0.45, dark), lerp(0.96, 0.55, dark), 1);
-      sun.intensity = lerp(1.7, 0.06, dark);
-      for (const d of sunDiscs) d.visible = dark < 0.6;
-      starMat.opacity = Math.max(0, (dark - 0.4) / 0.6);
+      hemi.intensity = lerp(1.55, 0.32, dark); hemi.color.setRGB(lerp(0.92, 0.45, dark), lerp(0.96, 0.55, dark), 1);
+      sun.intensity = lerp(2.3, 0.06, dark);
       seaMat.color.setRGB(lerp(0.165, 0.02, dark), lerp(0.47, 0.06, dark), lerp(0.65, 0.1, dark));
       wtex.offset.x = (clock * 0.004) % 1; wtex.offset.y = (clock * 0.0025) % 1;
 

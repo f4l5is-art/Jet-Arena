@@ -37,22 +37,27 @@ function hideScreens() {
 document.querySelectorAll('[data-back]').forEach((b) => b.addEventListener('click', () => show(playing ? 's-pause' : 's-menu')));
 
 // ------------------------------------------------------------------ settings
-const defQuality = (navigator.hardwareConcurrency || 4) <= 2 ? '0' : '1';
+const isPC = matchMedia('(hover:hover) and (pointer:fine)').matches;
+const defQuality = isPC ? '2' : (navigator.hardwareConcurrency || 4) <= 2 ? '0' : '1'; // PCs start on High
 $('name').value = store.get('name', '');
 $('qual').value = store.get('qual', defQuality);
 $('sens').value = store.get('sens', '1');
 $('cam3').value = store.get('cam3', '1');
 $('snd').value = store.get('snd', '1');
-$('auto').value = store.get('auto', '1');
+$('auto').value = store.get('auto', isPC ? '0' : '1'); // with a mouse you aim yourself
+$('invy').value = store.get('invy', '0');
+$('fps').value = store.get('fps', '0');
 function applySettings() {
   renderer.setQuality(Number($('qual').value));
   input.sens = Number($('sens').value);
+  input.invY = $('invy').value === '1';
+  $('fpsbox').style.display = $('fps').value === '1' ? 'block' : 'none';
   renderer.thirdPerson = $('cam3').value === '1';
   setSound($('snd').value === '1');
-  for (const k of ['qual', 'sens', 'cam3', 'snd', 'auto']) store.set(k, $(k).value);
+  for (const k of ['qual', 'sens', 'cam3', 'snd', 'auto', 'invy', 'fps']) store.set(k, $(k).value);
   document.body.classList.toggle('manualfire', $('auto').value === '0'); // no auto-fire: bring back the FIRE button
 }
-for (const k of ['qual', 'sens', 'cam3', 'snd', 'auto']) $(k).addEventListener('input', applySettings);
+for (const k of ['qual', 'sens', 'cam3', 'snd', 'auto', 'invy', 'fps']) $(k).addEventListener('input', applySettings);
 applySettings();
 // ------------------------------------------------------------------ lobby (menu) extras
 const lobby = new LobbyStage(renderer, $('stage'));
@@ -129,6 +134,7 @@ function startGame(s, { reset = false } = {}) {
   $('net').textContent = '';
   initAudio();
   document.documentElement.requestFullscreen?.().catch(() => {});
+  if (isPC) input.lock();
   try { navigator.wakeLock?.request('screen').catch(() => {}); } catch { /* unsupported */ }
 }
 
@@ -162,7 +168,7 @@ function setPause(v) {
   if (!playing) return;
   paused = v;
   input.enabled = !v;
-  if (v) { input.reset(); show('s-pause'); $('p-invite').style.display = hotspotNet ? 'block' : 'none'; } else hideScreens();
+  if (v) { input.reset(); show('s-pause'); $('p-invite').style.display = hotspotNet ? 'block' : 'none'; } else { hideScreens(); if (isPC && !input.touch) input.lock(); }
 }
 $('pause').addEventListener('pointerdown', (e) => { e.preventDefault(); setPause(true); });
 function toggleCamera() {
@@ -172,6 +178,10 @@ function toggleCamera() {
 $('btn-cam').addEventListener('pointerdown', (e) => { e.preventDefault(); toggleCamera(); });
 addEventListener('keydown', (e) => { if (e.key.toLowerCase() === 'v' && playing && !paused) toggleCamera(); });
 $('p-resume').onclick = () => setPause(false);
+addEventListener('keydown', (e) => {
+  if (e.key.toLowerCase() !== 'f' || !playing || paused) return;
+  if (document.fullscreenElement) document.exitFullscreen?.().catch(() => {}); else document.documentElement.requestFullscreen?.().catch(() => {});
+});
 addEventListener('keydown', (e) => { if (e.key === 'Escape' && playing && current !== 's-end') setPause(!paused); });
 document.addEventListener('visibilitychange', () => { if (document.hidden && playing && !paused) setPause(true); });
 document.addEventListener('pointerlockchange', () => { if (!document.pointerLockElement && playing && !paused && !input.touch && current === '') setPause(true); });
@@ -491,9 +501,11 @@ function hud(dt) {
 
 // ------------------------------------------------------------------ main loop
 let last = performance.now();
+let fpsAcc = 0, fpsN = 0;
 function frame(now) {
   requestAnimationFrame(frame);
   const dt = Math.min(0.1, (now - last) / 1000);
+  if (playing && $('fps').value === '1') { fpsAcc += dt; fpsN++; if (fpsAcc >= 0.5) { $('fpsbox').textContent = Math.round(fpsN / fpsAcc) + ' FPS'; fpsAcc = 0; fpsN = 0; } }
   last = now;
   if (!session) { if (current === 's-menu') lobby.draw(dt); return; }
   const frozen = paused && session.isHost && !session.net; // only solo can truly pause

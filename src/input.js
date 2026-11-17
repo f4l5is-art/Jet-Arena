@@ -10,7 +10,7 @@ export class Input {
     this.rl = false; this.sw = -1; this.jumpFlag = false;
     this.adsToggle = false; this.adsHold = false; this.zoomLevel = 0; this.zoomStep = false;
     this.zoomMul = 1; // look speed scales down while zoomed so fine aim stays easy
-    this.sens = 1;
+    this.sens = 1; this.invY = false;
     this.keys = new Set();
     this.touch = false;
     this.enabled = false;
@@ -89,13 +89,15 @@ export class Input {
       if (k >= '1' && k <= '4') this.sw = Number(k) - 1;
       if (k === 'r') this.rl = true;
       if (k === 'q') this.cycle = true;
+      if (k === 'tab' || k.startsWith('arrow')) e.preventDefault();
       if (k === ' ') { e.preventDefault(); if (!e.repeat) this.jumpFlag = true; } // tap = jump, hold = jetpack
     });
     addEventListener('keyup', (e) => this.keys.delete(e.key.toLowerCase()));
     const canvas = $('game');
+    this.canvas = canvas;
     canvas.addEventListener('mousedown', (e) => {
       if (!this.enabled || this.touch) return;
-      if (document.pointerLockElement !== canvas) { canvas.requestPointerLock?.(); return; }
+      if (document.pointerLockElement !== canvas) { this.lock(); return; } // the first click only grabs the mouse
       if (e.button === 0) this.mouseFire = true;
       if (e.button === 2) this.adsHold = true;
     });
@@ -103,10 +105,25 @@ export class Input {
     canvas.addEventListener('contextmenu', (e) => e.preventDefault());
     addEventListener('mousemove', (e) => {
       if (!this.enabled || document.pointerLockElement !== canvas) return;
-      this.turn(e.movementX * 0.0022, e.movementY * 0.0022);
+      this.touch = false; // a locked mouse means a real mouse (laptops with a touchscreen)
+      let dx = e.movementX || 0, dy = e.movementY || 0;
+      if (Math.abs(dx) > 400 || Math.abs(dy) > 400) return; // browsers sometimes emit one huge bogus jump when the lock starts
+      this.turn(dx * 0.0022, dy * 0.0022 * (this.invY ? -1 : 1));
     });
     addEventListener('wheel', (e) => { if (!this.enabled) return; if (this.scopedNow) this.zoomStep = true; else this.sw = e.deltaY > 0 ? -2 : -3; }, { passive: true });
     addEventListener('blur', () => { this.keys.clear(); this.mouseFire = false; });
+  }
+
+  // Grab the mouse. Asks for raw, un-accelerated movement first (what an external gaming mouse wants), and
+  // falls back to the normal lock where the browser does not support that.
+  lock() {
+    const c = this.canvas;
+    if (!c || !c.requestPointerLock || document.pointerLockElement === c) return;
+    const quiet = (r) => { if (r && r.catch) r.catch(() => {}); };
+    try {
+      const r = c.requestPointerLock({ unadjustedMovement: true });
+      if (r && r.catch) r.catch(() => { try { quiet(c.requestPointerLock()); } catch { /* ignore */ } });
+    } catch { try { quiet(c.requestPointerLock()); } catch { /* ignore */ } }
   }
 
   turn(dx, dy) {

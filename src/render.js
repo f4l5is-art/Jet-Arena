@@ -11,7 +11,12 @@ import { MonsterViews } from './monsters.js';
 export class Renderer {
   constructor(canvas) {
     this.canvas = canvas;
-    this.gl = new THREE.WebGLRenderer({ canvas, antialias: false, powerPreference: 'high-performance' });
+    // MSAA only on desktop-class devices (phones are too slow for it).
+    this.desktop = matchMedia('(hover:hover) and (pointer:fine)').matches;
+    this.gl = new THREE.WebGLRenderer({ canvas, antialias: this.desktop, powerPreference: 'high-performance' });
+    this.gl.toneMapping = THREE.NeutralToneMapping; // keeps colours, rolls off the bright sun-lit surfaces
+    this.gl.toneMappingExposure = 1.0;
+    this.gl.shadowMap.type = THREE.PCFSoftShadowMap;
     this.gl.autoClear = false; // we clear by hand so the first-person gun can be drawn in a second pass
     this.quality = 1; // 0 low, 1 medium, 2 high
     this.scene = new THREE.Scene();
@@ -35,10 +40,21 @@ export class Renderer {
     addEventListener('resize', () => this.resize());
   }
 
-  setQuality(q) { this.quality = q; this.resize(); }
+  // 0 Low, 1 Medium, 2 High (sun shadows, grass), 3 Ultra (bigger shadows, dense grass, full resolution)
+  setQuality(q) {
+    this.quality = q;
+    const shadows = q >= 2;
+    if (this.gl.shadowMap.enabled !== shadows) {
+      this.gl.shadowMap.enabled = shadows;
+      for (const sc of [this.scene, this.vmScene]) sc && sc.traverse((o) => { const m = o.material; if (m) (Array.isArray(m) ? m : [m]).forEach((x) => { x.needsUpdate = true; }); });
+    }
+    this.realShadows = shadows;
+    for (const w of Object.values(this.worlds || {})) w.res && w.res.setQuality && w.res.setQuality(q);
+    this.resize();
+  }
 
   resize() {
-    const dpr = [0.55, 0.8, Math.min(devicePixelRatio || 1, 2)][this.quality];
+    const dpr = [0.55, 0.8, Math.min(devicePixelRatio || 1, 2), Math.min(devicePixelRatio || 1, 2.5)][this.quality];
     this.gl.setPixelRatio(dpr);
     this.gl.setSize(innerWidth, innerHeight, false);
     this.cam.aspect = innerWidth / innerHeight;
@@ -55,7 +71,7 @@ export class Renderer {
 
   setMapKind(kind) {
     if (kind === this.kind) return;
-    if (!this.worlds[kind]) this.worlds[kind] = this.capture(() => buildIslandWorld(this.scene));
+    if (!this.worlds[kind]) { this.worlds[kind] = this.capture(() => buildIslandWorld(this.scene)); this.worlds[kind].res.setQuality(this.quality); this.setQuality(this.quality); }
     for (const [k, w] of Object.entries(this.worlds)) for (const o of w.objs) o.visible = k === kind;
     const w = this.worlds[kind];
     this.scene.fog = w.fog; this.scene.background = w.bg; this.world = w.res; this.kind = kind;

@@ -3,8 +3,10 @@
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import { MAP, HALF } from './core.js';
+import { createSky, SUN_DIR, HORIZON_DAY } from './sky.js';
+import { buildGrass } from './grass.js';
 
-export const HORIZON = 0xcfe3f2;
+export const HORIZON = 0xbcd8f0; // equals the sky's horizon colour, so the fog melts into it
 export const FOG_NEAR = 70, FOG_FAR = 190, CAM_FAR = 215;
 
 // ------------------------------------------------------------------ tiny helpers
@@ -289,77 +291,132 @@ function buildDecor() {
   return mergeGeometries(parts, false);
 }
 
-// ------------------------------------------------------------------ sky
-export function buildSky(scene) {
-  const g = new THREE.SphereGeometry(190, 20, 12);
-  const top = new THREE.Color(0x4a8fd6), mid = new THREE.Color(0x9cc6ea), hor = new THREE.Color(HORIZON);
-  const pos = g.attributes.position, col = new Float32Array(pos.count * 3), c = new THREE.Color();
-  for (let i = 0; i < pos.count; i++) {
-    const y = pos.getY(i) / 190;
-    if (y <= 0) c.copy(hor);
-    else if (y < 0.25) c.copy(hor).lerp(mid, y / 0.25);
-    else c.copy(mid).lerp(top, Math.min(1, (y - 0.25) / 0.6));
-    col.set([c.r, c.g, c.b], i * 3);
-  }
-  g.setAttribute('color', new THREE.BufferAttribute(col, 3));
-  const sky = new THREE.Mesh(g, new THREE.MeshBasicMaterial({ vertexColors: true, side: THREE.BackSide, fog: false, depthWrite: false, depthTest: false }));
-  sky.renderOrder = -10; sky.frustumCulled = false;
-  scene.add(sky);
+// ------------------------------------------------------------------ sun, shadows and quality
+// Quality index: 0 Low, 1 Medium, 2 High, 3 Ultra.
+export const SHADOW_CFG = [null, null, { size: 2048, R: 32 }, { size: 3072, R: 46 }];
+export const GRASS_CFG = [{ d: 0, fade: 40 }, { d: 0.22, fade: 40 }, { d: 0.6, fade: 54 }, { d: 1, fade: 66 }];
+export const CLOUD_OCT = [2, 3, 4, 5];
+const UP = new THREE.Vector3(0, 1, 0);
 
-  // sun: a bright disc with a soft halo, in the direction of the directional light
-  const dir = new THREE.Vector3(30, 60, 20).normalize();
-  for (const [r, op, rank] of [[26, 0.22, -9], [10, 1, -8]]) {
-    const m = new THREE.Mesh(new THREE.CircleGeometry(r, 20), new THREE.MeshBasicMaterial({
-      color: 0xfff4cf, transparent: op < 1, opacity: op, fog: false, depthWrite: false, depthTest: false }));
-    m.position.copy(dir).multiplyScalar(170); m.lookAt(0, 0, 0); m.renderOrder = rank; m.frustumCulled = false;
-    sky.add(m);
-  }
+// The sun: one directional light. With shadows on, its shadow box follows the player, snapped to whole
+// shadow-map texels so the edges don't shimmer when you move.
+export function makeSun(scene, intensity = 2.3) {
+  const sun = new THREE.DirectionalLight(0xfff0d6, intensity);
+  sun.position.copy(SUN_DIR).multiplyScalar(100);
+  scene.add(sun, sun.target);
+  const sc = sun.shadow.camera;
+  sc.near = 1; sc.far = 240;
+  sun.shadow.bias = -0.0005; sun.shadow.normalBias = 0.05;
+  let cfg = null;
+  const r = new THREE.Vector3(), u = new THREE.Vector3(), f = new THREE.Vector3(), t = new THREE.Vector3();
+  return {
+    light: sun,
+    setQuality(q) {
+      cfg = SHADOW_CFG[q] || null;
+      sun.castShadow = !!cfg;
+      if (!cfg) return;
+      const R = cfg.R;
+      sc.left = -R; sc.right = R; sc.top = R; sc.bottom = -R; sc.updateProjectionMatrix();
+      if (sun.shadow.mapSize.x !== cfg.size) { sun.shadow.mapSize.set(cfg.size, cfg.size); if (sun.shadow.map) { sun.shadow.map.dispose(); sun.shadow.map = null; } }
+    },
+    follow(camPos) {
+      t.set(camPos.x, 0, camPos.z);
+      if (cfg) {
+        f.copy(SUN_DIR).negate(); r.crossVectors(f, UP).normalize(); u.crossVectors(r, f);
+        const tr = t.dot(r), tu = t.dot(u), k = (2 * cfg.R) / cfg.size;
+        t.addScaledVector(r, Math.round(tr / k) * k - tr).addScaledVector(u, Math.round(tu / k) * k - tu);
+      }
+      sun.target.position.copy(t);
+      sun.position.copy(t).addScaledVector(SUN_DIR, 100);
+      sun.target.updateMatrixWorld();
+    },
+  };
+}
 
-  // clouds: a few flattened blobs that drift slowly around the player
-  const cg = new THREE.IcosahedronGeometry(1, 0), parts = [];
-  for (let i = 0; i < 16; i++) {
-    const a = rnd() * Math.PI * 2, r = 70 + rnd() * 70, y = 60 + rnd() * 28, cx = Math.cos(a) * r, cz = Math.sin(a) * r;
-    const n = 3 + ((rnd() * 3) | 0), sc = 9 + rnd() * 9;
-    for (let j = 0; j < n; j++) {
-      const k = sc * (0.55 + rnd() * 0.5);
-      parts.push(part(cg, 0xffffff, place(cx + (j - n / 2) * sc * 0.8, y + rnd() * 2, cz + (rnd() - 0.5) * sc * 0.6, k, k * 0.38, k * 0.7, rnd() * 3), 0.04));
-    }
+// marks every mesh under `obj` as casting and/or receiving shadows
+export function shadowFlags(m, cast = true, receive = true) { m.castShadow = cast; m.receiveShadow = receive; return m; }
+
+// ------------------------------------------------------------------ ground detail
+// A small tiled noise multiplied over the painted ground, so close-up it is not a blur.
+function detailTexture() {
+  const [c, g] = canvas(256);
+  g.fillStyle = '#808080'; g.fillRect(0, 0, 256, 256);
+  for (let i = 0; i < 9000; i++) {
+    const v = 90 + rnd() * 100 | 0;
+    g.fillStyle = `rgb(${v},${v},${v})`;
+    g.fillRect(rnd() * 256, rnd() * 256, 1 + rnd() * 2, 1 + rnd() * 5);
   }
-  const clouds = new THREE.Mesh(mergeGeometries(parts, false), new THREE.MeshBasicMaterial({ vertexColors: true, fog: false, transparent: true, opacity: 0.92 }));
-  clouds.frustumCulled = false;
-  scene.add(clouds);
-  return { sky, clouds };
+  for (let i = 0; i < 40; i++) { // soft blotches
+    const x = rnd() * 256, y = rnd() * 256, r = 14 + rnd() * 30, gr = g.createRadialGradient(x, y, 0, x, y, r);
+    const dk = rnd() < 0.5; gr.addColorStop(0, dk ? 'rgba(40,40,40,.3)' : 'rgba(200,200,200,.3)'); gr.addColorStop(1, 'rgba(128,128,128,0)');
+    g.fillStyle = gr; g.fillRect(x - r, y - r, r * 2, r * 2);
+  }
+  const t = new THREE.CanvasTexture(c);
+  t.wrapS = t.wrapT = THREE.RepeatWrapping; t.anisotropy = 8;
+  return t;
+}
+function addDetail(mat, tex, rep) {
+  mat.onBeforeCompile = (sh) => {
+    sh.uniforms.uDetail = { value: tex };
+    sh.fragmentShader = sh.fragmentShader
+      .replace('#include <common>', '#include <common>\nuniform sampler2D uDetail;')
+      .replace('#include <map_fragment>', `#include <map_fragment>\n diffuseColor.rgb *= 0.45 + texture2D(uDetail, vMapUv * ${rep.toFixed(2)}).g * 1.1;`);
+  };
+  mat.customProgramCacheKey = () => 'detail' + rep;
+}
+
+// ------------------------------------------------------------------ where grass may grow
+function grassRules() {
+  const solid = MAP.boxes.filter((b) => b.miny < 0.6);
+  const pads = (MAP.pads || []).filter((p) => p.m === 'dirt' || p.m === 'concrete');
+  const forestPads = (MAP.pads || []).filter((p) => p.m === 'forest');
+  const props = MAP.decor.filter((d) => d.t === 'rock' || d.t === 'barrel');
+  const inPad = (p, x, z, m) => Math.abs(x - p.x) < p.w / 2 + m && Math.abs(z - p.z) < p.d / 2 + m;
+  return {
+    blocked(x, z) {
+      for (const b of solid) if (x > b.minx - 0.35 && x < b.maxx + 0.35 && z > b.minz - 0.35 && z < b.maxz + 0.35) return true;
+      for (const p of pads) {
+        if (inPad(p, x, z, -0.2)) return true;
+        if (p.m === 'dirt' && inPad(p, x, z, 1.2) && hash(x, z, 3) < 0.65) return true; // ragged, worn edge
+      }
+      for (const d of props) { const r = (d.t === 'rock' ? 1.3 * (d.s || 1) : 0.8); if (Math.abs(x - d.x) < r && Math.abs(z - d.z) < r) return true; }
+      return false;
+    },
+    forest(x, z) { return forestPads.some((p) => inPad(p, x, z, 0)); },
+  };
 }
 
 // ------------------------------------------------------------------ entry point
 export function buildWorld(scene) {
-  scene.background = new THREE.Color(HORIZON);
-  scene.fog = new THREE.Fog(HORIZON, FOG_NEAR, FOG_FAR);
+  const sky = createSky(scene, 4);
+  scene.background = sky.horizon.clone();
+  scene.fog = new THREE.Fog(sky.horizon.clone(), FOG_NEAR, FOG_FAR);
 
-  scene.add(new THREE.HemisphereLight(0xeaf4ff, 0x77705f, 1.7));
-  const sun = new THREE.DirectionalLight(0xfff0d0, 1.7);
-  sun.position.set(30, 60, 20);
-  scene.add(sun);
+  scene.add(new THREE.HemisphereLight(0xcfe4ff, 0x8a8670, 1.55));
+  const sun = makeSun(scene, 2.3);
 
   const tiles = makeTextures();
   const mats = {};
   const mat = (name) => mats[name] || (mats[name] = new THREE.MeshLambertMaterial({ map: tiles[name].map, vertexColors: true, flatShading: true }));
+  const detail = detailTexture();
 
   // ground: painted arena floor + tiled grass all around it
   const groundMat = new THREE.MeshLambertMaterial({ map: makeGroundTexture(), flatShading: true });
-  const arena = new THREE.Mesh(new THREE.PlaneGeometry(HALF * 2, HALF * 2), groundMat);
+  addDetail(groundMat, detail, HALF * 2 / 1.6);
+  const arena = shadowFlags(new THREE.Mesh(new THREE.PlaneGeometry(HALF * 2, HALF * 2), groundMat), false, true);
   arena.rotation.x = -Math.PI / 2;
   scene.add(arena);
   const outer = new THREE.MeshLambertMaterial({ map: tiles.grass.map.clone(), flatShading: true });
   outer.map.needsUpdate = true;
   outer.map.repeat.set(1, 1);
+  addDetail(outer, detail, 5);
   const E = 260;
   for (const [cx, cz, w, d] of [[0, -(HALF + E) / 2, E * 2, E - HALF], [0, (HALF + E) / 2, E * 2, E - HALF],
     [-(HALF + E) / 2, 0, E - HALF, HALF * 2], [(HALF + E) / 2, 0, E - HALF, HALF * 2]]) {
     const g = new THREE.PlaneGeometry(w, d);
     const uv = g.attributes.uv, t = tiles.grass.tile;
     for (let i = 0; i < uv.count; i++) uv.setXY(i, (uv.getX(i) - 0.5) * w / t + cx / t, (uv.getY(i) - 0.5) * d / t - cz / t);
-    const m = new THREE.Mesh(g, outer);
+    const m = shadowFlags(new THREE.Mesh(g, outer), false, true);
     m.rotation.x = -Math.PI / 2; m.position.set(cx, 0, cz);
     scene.add(m);
   }
@@ -367,20 +424,24 @@ export function buildWorld(scene) {
   // all boxes merged per texture
   const acc = {};
   for (const b of MAP.boxes) if (!b.hide) addBoxFaces(acc, b, tiles);
-  for (const name of Object.keys(acc)) {
-    const m = new THREE.Mesh(geoFrom(acc[name]), mat(name));
-    scene.add(m);
-  }
+  for (const name of Object.keys(acc)) scene.add(shadowFlags(new THREE.Mesh(geoFrom(acc[name]), mat(name))));
 
   // trees, rocks, barrels, mountains
-  scene.add(new THREE.Mesh(buildDecor(), new THREE.MeshLambertMaterial({ vertexColors: true, flatShading: true })));
+  scene.add(shadowFlags(new THREE.Mesh(buildDecor(), new THREE.MeshLambertMaterial({ vertexColors: true, flatShading: true }))));
 
-  const { sky, clouds } = buildSky(scene);
+  const grass = buildGrass(scene, { half: HALF, ...grassRules() });
+  const clock = { t: 0 };
   return {
+    sun,
+    setQuality(q) {
+      sun.setQuality(q);
+      grass.setQuality(GRASS_CFG[q].d, GRASS_CFG[q].fade);
+      sky.setDetail(CLOUD_OCT[q]);
+    },
     update(camPos, dt) {
-      sky.position.copy(camPos);
-      clouds.position.set(camPos.x, 0, camPos.z);
-      clouds.rotation.y += dt * 0.006;
+      sky.update(camPos, dt, 0);
+      sun.follow(camPos);
+      grass.update(camPos, dt);
     },
   };
 }

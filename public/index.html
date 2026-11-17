@@ -194,7 +194,7 @@ button.surv small{display:block;font-size:10px;letter-spacing:1px;font-weight:60
 
 <div id="scope"><i class="sh"></i><i class="sv"></i><i class="dot"></i><b id="zoomtag">4x</b></div>
 <div id="hud">
-  <div id="vig"></div><div id="cross"><i></i><i></i><i></i><i></i><b></b></div><div id="hitm"></div>
+  <div id="fpsbox" style="display:none;position:fixed;left:8px;bottom:8px;font:700 12px monospace;color:#9f9;text-shadow:0 1px 3px #000"></div><div id="vig"></div><div id="cross"><i></i><i></i><i></i><i></i><b></b></div><div id="hitm"></div>
   <div class="hbar"><div class="bar" id="hpbar"><i id="hp"></i></div><div class="bar fuel" id="fuelbar"><i id="fuel"></i></div></div>
   <div id="top"><span id="timer">5:00</span><small id="goal"></small>
     <div id="sv"><div class="svb"><span>💡</span><div class="bar"><i id="svfuel"></i></div></div><div class="svb" id="svhprow"><span>🗼</span><div class="bar"><i id="svhp"></i></div></div><div id="svcans"></div></div></div>
@@ -332,9 +332,13 @@ button.surv small{display:block;font-size:10px;letter-spacing:1px;font-weight:60
 <div class="screen" id="s-settings"><div class="card">
   <h2>Settings</h2>
   <label for="qual">Graphics</label>
-  <select id="qual"><option value="0">Low (fastest)</option><option value="1" selected>Medium</option><option value="2">High (sharp)</option></select>
+  <select id="qual"><option value="0">Low (fastest)</option><option value="1">Medium</option><option value="2">High (shadows, grass)</option><option value="3">Ultra (PC: best shadows, dense grass)</option></select>
   <label for="sens">Look sensitivity</label>
   <input type="range" id="sens" min="0.4" max="2.2" step="0.05" value="1">
+  <label for="invy">Invert mouse Y</label>
+  <select id="invy"><option value="0">Off</option><option value="1">On</option></select>
+  <label for="fps">Show FPS</label>
+  <select id="fps"><option value="0">Off</option><option value="1">On</option></select>
   <label for="cam3">Camera</label>
   <select id="cam3"><option value="1">Third person</option><option value="0">First person</option></select>
   <label for="auto">Auto-fire when aiming at an enemy (turn off to get a FIRE button)</label>
@@ -350,6 +354,7 @@ button.surv small{display:block;font-size:10px;letter-spacing:1px;font-weight:60
   <button class="pri" id="p-resume">Resume</button>
   <button id="p-invite" style="display:none">Invite hotspot friends</button>
   <button class="ghost" id="p-settings">Settings</button>
+  <div class="note pckeys">PC: WASD move · mouse aim · left click fire · right click scope · Space jump / hold for jetpack · Shift jetpack · R reload · 1-4 / wheel / Q weapon · V camera · F fullscreen · Esc pause</div>
   <button class="danger" id="p-quit">Leave match</button>
 </div></div>
 <div class="screen overlay" id="s-end"><div class="card">

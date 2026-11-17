@@ -68,6 +68,7 @@ export class Avatar {
     this.tag = r.makeTag(p.name); this.tag.position.y = 2.25; this.root.add(this.tag);
     this.shadow = new THREE.Mesh(shadowGeo, shadowMat);
     this.shadow.rotation.x = -Math.PI / 2;
+    this.root.traverse((o) => { if (o.isMesh && o.material !== flameMat && o.material !== flashMat && !o.material.isMeshBasicMaterial) o.castShadow = true; });
     r.scene.add(this.root); r.scene.add(this.shadow);
 
     this.legYaw = p.yaw || 0; this.phase = 0; this.t = Math.random() * 10;
@@ -112,7 +113,7 @@ export class Avatar {
     this.shadow.position.set(p.x, surface + 0.04, p.z);
     this.shadow.scale.setScalar(1 - Math.min(0.5, h * 0.05));
     shadowMat.opacity = 0.3;
-    this.shadow.visible = p.alive || this.deadT < 2.2;
+    this.shadow.visible = (p.alive || this.deadT < 2.2) && !r.realShadows; // the blob is only for when there are no real shadows
 
     // hit flash
     this.flash = Math.max(0, this.flash - dt);
