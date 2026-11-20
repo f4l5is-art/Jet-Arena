@@ -1,20 +1,18 @@
-// Network transports. The host runs the whole game; everyone else sends inputs and
-// receives snapshots. Two ways to connect:
-//   1) online: WebSocket relay through the lobby server (room codes)
-//   2) hotspot: WebRTC data channels, signalled by QR codes / pasted text (no internet)
-// Both give the game the same two shapes: HostNet (host side) and ClientNet (joiner side).
+// Network transports. Everyone who is not running the simulation sends inputs and receives snapshots.
+//   1) online: WebSocket to the game server, which runs the match itself (a dedicated server, no phone hosts)
+//   2) hotspot: WebRTC data channels between phones, signalled by QR codes / pasted text (works with no internet);
+//      one phone hosts. HostNet is that host side. ClientNet is the player side for both.
 import { packSdp, unpackSdp } from './sdpcodec.js';
 
 const enc = JSON.stringify;
 
 export class HostNet {
-  constructor(mode) {
-    this.mode = mode; // 'online' | 'hotspot'
+  constructor() {
+    this.mode = 'hotspot';
     this.code = '';
-    this.links = new Map(); // pid -> { send(obj) }
-    this.pending = new Map(); // hotspot: pid -> { pc, dc }
+    this.links = new Map(); // pid -> { send(obj), sendRaw(str), sendFast(str), close() }
+    this.pending = new Map(); // pid -> { pc, dc, accepted }
     this.nextPid = 1;
-    this.ws = null;
     this.onPeer = () => {}; // (pid, name)
     this.onLeave = () => {}; // (pid)
     this.onMsg = () => {}; // (pid, msg)
@@ -23,14 +21,12 @@ export class HostNet {
 
   sendTo(pid, obj) { const l = this.links.get(pid); if (l) l.send(obj); }
 
-  broadcast(obj) {
-    if (this.mode === 'online') { if (this.ws && this.ws.readyState === 1) this.ws.send(enc({ t: 'to', pid: 0, d: obj })); return; }
-    const s = enc(obj);
-    for (const l of this.links.values()) l.sendRaw(s);
-  }
+  broadcast(obj) { const s = enc(obj); for (const l of this.links.values()) l.sendRaw(s); }
+
+  // Snapshots go on the unordered, no-resend channel: a lost one is simply replaced by the next, and never stalls the rest.
+  broadcastFast(obj) { const s = enc(obj); for (const l of this.links.values()) l.sendFast(s); }
 
   close() {
-    if (this.ws) { this.ws.onclose = null; this.ws.close(); }
     for (const { pc } of this.pending.values()) pc.close();
     for (const l of this.links.values()) if (l.close) l.close();
     this.links.clear(); this.pending.clear();
@@ -40,9 +36,10 @@ export class HostNet {
   // Step 1: create a code for one friend to scan. Returns { pid, code }.
   async hotspotInvite() {
     const pc = new RTCPeerConnection({ iceServers: [] });
-    const dc = pc.createDataChannel('g');
+    const dc = pc.createDataChannel('g'); // reliable: names, inputs, events
+    const fast = pc.createDataChannel('u', { ordered: false, maxRetransmits: 0 }); // snapshots
     const pid = this.nextPid++;
-    this.pending.set(pid, { pc, dc });
+    this.pending.set(pid, { pc, dc, accepted: false });
     let named = false;
     dc.onmessage = (ev) => {
       const m = JSON.parse(ev.data);
@@ -50,21 +47,30 @@ export class HostNet {
       this.onMsg(pid, m);
     };
     dc.onopen = () => {
-      this.links.set(pid, { send: (o) => dc.readyState === 'open' && dc.send(enc(o)), sendRaw: (s) => dc.readyState === 'open' && dc.send(s), close: () => pc.close() });
+      this.links.set(pid, {
+        send: (o) => dc.readyState === 'open' && dc.send(enc(o)),
+        sendRaw: (s) => dc.readyState === 'open' && dc.send(s),
+        sendFast: (s) => { const c = fast.readyState === 'open' ? fast : dc; if (c.readyState === 'open') c.send(s); },
+        close: () => pc.close(),
+      });
     };
     const drop = () => { if (this.links.delete(pid) || this.pending.delete(pid)) this.onLeave(pid); pc.close(); };
     dc.onclose = drop;
     pc.onconnectionstatechange = () => { if (pc.connectionState === 'failed' || pc.connectionState === 'disconnected') drop(); };
     await pc.setLocalDescription(await pc.createOffer());
     await gathered(pc);
-    return { pid, code: packSdp(pc.localDescription.sdp) };
+    const sdp = pc.localDescription.sdp;
+    if (!/a=candidate/.test(sdp)) { pc.close(); this.pending.delete(pid); throw new Error('Could not find this phone on the network. Make sure the hotspot is on and Wi-Fi is connected, then try again.'); }
+    return { pid, code: packSdp(sdp) };
   }
 
   // Step 2: the friend's answer code (scanned or pasted) finishes the link.
   async hotspotAccept(pid, answerText) {
-    const p = this.pending.get(pid);
+    const p = this.pending.get(pid) || (this.links.has(pid) ? { accepted: true } : null);
     if (!p) throw new Error('That invite expired, make a new one');
-    await p.pc.setRemoteDescription({ type: 'answer', sdp: unpackSdp(answerText) });
+    if (p.accepted || p.pc.signalingState !== 'have-local-offer') return; // already connected or connecting: a second scan/tap is harmless
+    p.accepted = true;
+    try { await p.pc.setRemoteDescription({ type: 'answer', sdp: unpackSdp(answerText) }); } catch (e) { p.accepted = false; throw new Error('That code did not work. Ask your friend to scan the invite again.'); }
   }
 }
 
@@ -78,7 +84,7 @@ export class ClientNet {
   }
 }
 
-function gathered(pc, ms = 2500) {
+function gathered(pc, ms = 6000) {
   return new Promise((resolve) => {
     if (pc.iceGatheringState === 'complete') return resolve();
     const t = setTimeout(done, ms);
@@ -89,49 +95,29 @@ function gathered(pc, ms = 2500) {
 }
 
 // ---- online ----
-export function hostOnline(url, name, pub = true) {
-  return new Promise((resolve, reject) => {
-    const net = new HostNet('online');
-    let ws;
-    try { ws = new WebSocket(url); } catch { return reject(new Error('Bad server address')); }
-    net.ws = ws;
-    let settled = false;
-    ws.onopen = () => ws.send(enc({ t: 'create', name, pub }));
-    ws.onerror = () => { if (!settled) { settled = true; reject(new Error('Could not reach the server')); } };
-    ws.onclose = () => net.onClose();
-    ws.onmessage = (ev) => {
-      const m = JSON.parse(ev.data);
-      if (m.t === 'created') { settled = true; net.code = m.code; resolve(net); }
-      else if (m.t === 'peer') {
-        net.links.set(m.pid, { send: (o) => ws.send(enc({ t: 'to', pid: m.pid, d: o })) });
-        net.onPeer(m.pid, m.name);
-      } else if (m.t === 'left') { net.links.delete(m.pid); net.onLeave(m.pid); }
-      else if (m.t === 'from') net.onMsg(m.pid, m.d);
-      else if (m.t === 'error' && !settled) { settled = true; reject(new Error(m.msg)); }
-    };
-  });
-}
-
-export function joinOnline(url, code, name) {
+// Connect to the game server and create or join a room. The server runs the match; this is just a player.
+function connectOnline(url, first) {
   return new Promise((resolve, reject) => {
     const net = new ClientNet();
     let ws;
     try { ws = new WebSocket(url); } catch { return reject(new Error('Bad server address')); }
     let settled = false;
-    ws.onopen = () => ws.send(enc({ t: 'join', code: String(code).trim().toUpperCase(), name }));
+    ws.onopen = () => ws.send(enc(first));
     ws.onerror = () => { if (!settled) { settled = true; reject(new Error('Could not reach the server')); } };
-    ws.onclose = () => net.onClose('Disconnected');
+    ws.onclose = () => { if (!settled) { settled = true; reject(new Error('Could not reach the server')); } else net.onClose('Disconnected'); };
     net.send = (d) => { if (ws.readyState === 1) ws.send(enc({ t: 'up', d })); };
     net.close = () => { ws.onclose = null; ws.close(); };
     ws.onmessage = (ev) => {
       const m = JSON.parse(ev.data);
-      if (m.t === 'joined') { settled = true; net.pid = m.pid; resolve(net); }
+      if (m.t === 'joined') { settled = true; net.pid = m.pid; net.code = m.code; net.owner = !!m.owner; resolve(net); }
       else if (m.t === 'd') net.onMsg(m.d);
-      else if (m.t === 'closed') net.onClose('The host closed the room');
+      else if (m.t === 'closed') net.onClose('The room was closed');
       else if (m.t === 'error' && !settled) { settled = true; reject(new Error(m.msg)); }
     };
   });
 }
+export const createOnline = (url, name, mode = 'arena', pub = true) => connectOnline(url, { t: 'create', name, mode, pub });
+export const joinOnline = (url, code, name) => connectOnline(url, { t: 'join', code: String(code).trim().toUpperCase(), name });
 
 export function listRooms(url) {
   return new Promise((resolve, reject) => {
@@ -153,6 +139,7 @@ export async function hotspotJoin(offerText, name) {
     const t = setTimeout(() => reject(new Error('Timed out. Are you both on the same hotspot?')), 45000);
     pc.ondatachannel = (ev) => {
       const dc = ev.channel;
+      if (dc.label === 'u') { dc.onmessage = (e) => net.onMsg(JSON.parse(e.data)); return; } // snapshots
       net.send = (o) => { if (dc.readyState === 'open') dc.send(enc(o)); };
       net.close = () => pc.close();
       dc.onopen = () => { clearTimeout(t); dc.send(enc({ k: 'name', name })); resolve(net); };
@@ -164,5 +151,7 @@ export async function hotspotJoin(offerText, name) {
   await pc.setRemoteDescription({ type: 'offer', sdp: unpackSdp(offerText) });
   await pc.setLocalDescription(await pc.createAnswer());
   await gathered(pc);
-  return { net, answer: packSdp(pc.localDescription.sdp) };
+  const sdp = pc.localDescription.sdp;
+  if (!/a=candidate/.test(sdp)) { pc.close(); throw new Error('Could not find this phone on the network. Make sure Wi-Fi is connected to the host\'s hotspot.'); }
+  return { net, answer: packSdp(sdp) };
 }

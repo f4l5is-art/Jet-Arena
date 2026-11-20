@@ -6,7 +6,7 @@
   "scripts": {
     "build": "node build.js",
     "start": "node server/server.js",
-    "test": "node test/sim.test.js && node test/survival.test.js && node test/sdp.test.js && node test/camera.test.js && node test/zfight.test.js && node test/server.test.js"
+    "test": "node test/sim.test.js && node test/survival.test.js && node test/sdp.test.js && node test/camera.test.js && node test/zfight.test.js && node test/server.test.js && node test/netsim.test.js"
   },
   "dependencies": {
     "ws": "^8.18.0"

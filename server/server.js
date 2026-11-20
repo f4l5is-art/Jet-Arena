@@ -1,13 +1,13 @@
-// Lobby + relay server. Serves the built game (dist/) and relays messages between
-// the host of a room and its joiners over WebSocket. All game logic runs on the host.
+// Lobby + game server. Serves the built game (dist/) and RUNS every online match itself (dedicated
+// server): players only send inputs and draw the snapshots they get back. Hotspot play does not use this.
 import http from 'node:http';
 import { readFile, stat } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { WebSocketServer } from 'ws';
+import { Room, MAX_HUMANS } from './room.js';
 
 const ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'dist');
-const MAX_PLAYERS = 8;
 const MIME = {
   '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.json': 'application/json',
   '.webmanifest': 'application/manifest+json', '.png': 'image/png', '.svg': 'image/svg+xml', '.ico': 'image/x-icon',
@@ -54,14 +54,10 @@ export function startServer(port = 8080, root = ROOT) {
     const room = ws.room;
     if (!room) return;
     ws.room = null;
-    if (room.host === ws) {
-      for (const p of room.peers.values()) { send(p, { t: 'closed' }); p.room = null; }
-      rooms.delete(room.code);
-    } else {
-      room.peers.delete(ws.pid);
-      send(room.host, { t: 'left', pid: ws.pid });
-    }
+    room.remove(ws.pid);
   }
+
+  function dropRoom(room) { room.close(); rooms.delete(room.code); }
 
   wss.on('connection', (ws) => {
     ws.alive = true; ws.room = null; ws.pid = 0; ws.budget = 200; ws.lastRefill = Date.now();
@@ -81,41 +77,35 @@ export function startServer(port = 8080, root = ROOT) {
       switch (m.t) {
         case 'create': {
           leave(ws);
+          if (rooms.size >= 40) return send(ws, { t: 'error', msg: 'Server is full' });
           const code = newCode();
           if (!code) return send(ws, { t: 'error', msg: 'Server is full' });
-          const room = { code, name: cleanName(m.name) + "'s room", pub: m.pub !== false, host: ws, peers: new Map(), nextPid: 1 };
-          rooms.set(code, room); ws.room = room; ws.pid = 0;
-          send(ws, { t: 'created', code });
+          const room = new Room(code, { name: cleanName(m.name) + "'s room", pub: m.pub !== false, mode: m.mode });
+          room.onEmpty = dropRoom;
+          rooms.set(code, room);
+          ws.room = room; ws.pid = room.add(ws, cleanName(m.name));
+          send(ws, { t: 'joined', code, pid: ws.pid, owner: true });
+          room.announce(ws.pid, cleanName(m.name));
           break;
         }
         case 'join': {
           leave(ws);
           const room = rooms.get(String(m.code || '').toUpperCase());
           if (!room) return send(ws, { t: 'error', msg: 'Room not found' });
-          if (room.peers.size + 1 >= MAX_PLAYERS) return send(ws, { t: 'error', msg: 'Room is full' });
-          const pid = room.nextPid++;
-          ws.room = room; ws.pid = pid; room.peers.set(pid, ws);
-          send(ws, { t: 'joined', code: room.code, pid });
-          send(room.host, { t: 'peer', pid, name: cleanName(m.name) });
+          if (room.humans() >= MAX_HUMANS) return send(ws, { t: 'error', msg: 'Room is full' });
+          ws.room = room; ws.pid = room.add(ws, cleanName(m.name));
+          send(ws, { t: 'joined', code: room.code, pid: ws.pid, owner: ws.pid === room.session.ownerPid });
+          room.announce(ws.pid, cleanName(m.name));
           break;
         }
         case 'list': {
           const list = [];
-          for (const r of rooms.values()) if (r.pub) list.push({ code: r.code, name: r.name, players: r.peers.size + 1, max: MAX_PLAYERS });
+          for (const r of rooms.values()) if (r.pub) list.push({ code: r.code, name: r.name, players: r.humans(), max: MAX_HUMANS });
           send(ws, { t: 'rooms', rooms: list });
           break;
         }
-        case 'up': // joiner -> host
-          if (ws.room && ws.room.host !== ws) send(ws.room.host, { t: 'from', pid: ws.pid, d: m.d });
-          break;
-        case 'to': // host -> one joiner (pid) or everyone (pid 0)
-          if (ws.room && ws.room.host === ws) {
-            if (m.pid) { const p = ws.room.peers.get(m.pid); if (p) send(p, { t: 'd', d: m.d }); }
-            else for (const p of ws.room.peers.values()) send(p, { t: 'd', d: m.d });
-          }
-          break;
-        case 'meta': // host updates room name / visibility
-          if (ws.room && ws.room.host === ws) { if (typeof m.pub === 'boolean') ws.room.pub = m.pub; }
+        case 'up': // player -> the room's match
+          if (ws.room) ws.room.up(ws.pid, m.d);
           break;
         default:
       }
@@ -133,7 +123,7 @@ export function startServer(port = 8080, root = ROOT) {
   return new Promise((resolve) => {
     server.listen(port, () => resolve({
       port: server.address().port, rooms,
-      close: () => new Promise((r) => { clearInterval(beat); for (const c of wss.clients) c.terminate(); wss.close(); server.close(() => r()); }),
+      close: () => new Promise((r) => { clearInterval(beat); for (const room of rooms.values()) room.close(); for (const c of wss.clients) c.terminate(); wss.close(); server.close(() => r()); }),
     }));
   });
 }

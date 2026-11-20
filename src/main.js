@@ -5,7 +5,7 @@ import { MONS } from './survival.js';
 import { setMapKind } from './core.js';
 import { Input } from './input.js';
 import { HostSession, ClientSession } from './session.js';
-import { HostNet, hostOnline, joinOnline, listRooms, hotspotJoin } from './net.js';
+import { HostNet, createOnline, joinOnline, listRooms, hotspotJoin } from './net.js';
 import { drawQr, startScan, openCamera, closeCamera } from './qr.js';
 import { initAudio, setSound, sfx } from './audio.js';
 
@@ -248,9 +248,9 @@ $('o-host').onclick = async () => {
   initAudio(); oerr('');
   try {
     await wake();
-    const net = await hostOnline(serverUrl(), myName(), true);
     const mode = $('o-mode').value;
-    const s = new HostSession({ name: myName(), bots: mode === 'arena' ? 4 : 0, net, mode });
+    const net = await createOnline(serverUrl(), myName(), mode, true);
+    const s = new ClientSession(net); // the server runs the match; we are its first player and its leader
     session = s;
     $('l-botsrow').style.display = mode === 'arena' ? '' : 'none'; $('l-svnote').style.display = mode === 'arena' ? 'none' : '';
     $('l-svnote').textContent = mode === 'relax' ? 'Island relax: monsters roam and attack players, but never the lighthouse. Survive three nights until the rescue boat arrives.' : 'Island survival: defend the lighthouse together for three nights until the rescue boat arrives.';
@@ -258,14 +258,15 @@ $('o-host').onclick = async () => {
     $('l-code').textContent = net.code;
     $('l-bots').value = 5; $('l-botsn').textContent = '5';
     show('s-lobby');
+    await s.ready;
   } catch (e) { oerr(e.message); }
 };
 $('l-bots').oninput = () => {
   const n = Number($('l-bots').value);
   $('l-botsn').textContent = String(n);
-  if (session && session.botTarget !== undefined) { session.botTarget = n; session.balance(); }
+  if (session && session.net) session.net.send({ k: 'cfg', bots: n }); // the leader tells the server how many bots
 };
-$('l-start').onclick = () => startGame(session, { reset: true });
+$('l-start').onclick = () => { if (session && session.net) session.net.send({ k: 'start' }); startGame(session); };
 $('o-join').onclick = () => joinRoom($('code').value);
 async function joinRoom(code) {
   initAudio(); oerr('');
@@ -316,7 +317,7 @@ $('h-host').onclick = async () => {
 };
 let hotPid = 0;
 async function newInvite() {
-  stopScan();
+  stopScan(); accepting = false;
   herr('hh-err', '');
   try {
     const { pid, code } = await hotspotNet.hotspotInvite();
@@ -327,10 +328,14 @@ async function newInvite() {
     if (stop) { scanStop = stop; $('cam').style.display = 'block'; }
   } catch (e) { herr('hh-err', e.message); }
 }
+let accepting = false; // one scan can fire several times: only the first counts
 async function connectFriend() {
   const text = $('hh-answer').value.trim();
   if (!text) return herr('hh-err', 'Scan or paste your friend\'s code first');
-  try { await hotspotNet.hotspotAccept(hotPid, text); herr('hh-err', 'Connecting…'); } catch (e) { herr('hh-err', e.message); }
+  if (accepting) return;
+  accepting = true; stopScan(); $('hh-connect').disabled = true;
+  try { await hotspotNet.hotspotAccept(hotPid, text); herr('hh-err', 'Connecting… (up to 10 seconds)'); } catch (e) { herr('hh-err', e.message); accepting = false; }
+  $('hh-connect').disabled = false;
 }
 function refreshHotPlayers() {
   const l = $('hh-players'); l.textContent = '';
@@ -502,11 +507,13 @@ function hud(dt) {
 // ------------------------------------------------------------------ main loop
 let last = performance.now();
 let fpsAcc = 0, fpsN = 0;
+renderer.onAutoQuality = (q) => { $('qual').value = String(q); applySettings(); toast('Graphics lowered to keep the game smooth'); };
 function frame(now) {
   requestAnimationFrame(frame);
   const dt = Math.min(0.1, (now - last) / 1000);
   if (playing && $('fps').value === '1') { fpsAcc += dt; fpsN++; if (fpsAcc >= 0.5) { $('fpsbox').textContent = Math.round(fpsN / fpsAcc) + ' FPS'; fpsAcc = 0; fpsN = 0; } }
   last = now;
+  if (playing && !paused && !document.hidden) renderer.adapt(dt);
   if (!session) { if (current === 's-menu') lobby.draw(dt); return; }
   const frozen = paused && session.isHost && !session.net; // only solo can truly pause
   if (!frozen) {
@@ -568,4 +575,4 @@ if ('serviceWorker' in navigator && /^https?:$/.test(location.protocol)) {
   navigator.serviceWorker.register('sw.js').catch(() => {});
 }
 // Test hook for automated checks.
-window.__ja = { get session() { return session; }, input, renderer };
+window.__ja = { get session() { return session; }, input, renderer, net: { HostNet, hotspotJoin } };

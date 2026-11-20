@@ -32,14 +32,16 @@ class Base {
 
 // ---------------------------------------------------------------- host / solo
 export class HostSession extends Base {
-  constructor({ name = 'Player', bots = 5, scoreLimit = 20, timeLimit = 300, net = null, mode = 'arena' } = {}) {
+  constructor({ name = 'Player', bots = 5, scoreLimit = 20, timeLimit = 300, net = null, mode = 'arena', dedicated = false } = {}) {
     super();
     this.isHost = true;
+    this.dedicated = dedicated; // server-run match: nobody on the server plays
+    this.ownerPid = 0; // dedicated: the room leader (may change bots / start)
     this.mode = mode === 'survival' || mode === 'relax' ? 'survival' : 'arena';
     this.relax = mode === 'relax';
     this.view.mode = this.mode;
     this.game = new Game({ scoreLimit, timeLimit, mode: this.relax ? 'relax' : this.mode });
-    this.myId = this.game.addPlayer(name);
+    this.myId = dedicated ? 0 : this.game.addPlayer(name);
     this.botTarget = bots + 1; // total players we try to keep in the arena
     this.net = net;
     this.peers = new Map(); // net pid -> player id
@@ -61,6 +63,8 @@ export class HostSession extends Base {
         if (!id) return;
         if (m.k === 'in') this.game.setInput(id, m.i);
         else if (m.k === 'ping') net.sendTo(pid, { k: 'pong', t: m.t });
+        else if (m.k === 'cfg' && pid === this.ownerPid) { const n = Number(m.bots); if (Number.isFinite(n)) { this.botTarget = Math.max(0, Math.min(8, Math.round(n))); this.balance(); this.syncRoster(); } }
+        else if (m.k === 'start' && pid === this.ownerPid) this.game.resetMatch();
       };
       net.onClose = () => this.onClosed('Lost connection to the server');
     }
@@ -93,10 +97,11 @@ export class HostSession extends Base {
     if (ev.length) { this.emit(ev); this.pending.push(...ev); }
     this.sinceSnap += dt;
     if (this.net && this.sinceSnap >= 0.05) {
-      this.sinceSnap = 0;
-      this.net.broadcast({ k: 's', s: g.snapshot(), e: this.pending });
-      this.pending = [];
+      this.sinceSnap = this.sinceSnap > 0.1 ? 0 : this.sinceSnap - 0.05; // carry the remainder so the rate stays a steady 20/s
+      (this.net.broadcastFast || this.net.broadcast).call(this.net, { k: 's', s: g.snapshot() });
+      if (this.pending.length) { this.net.broadcast({ k: 'e', e: this.pending }); this.pending = []; }
     }
+    if (this.dedicated) return;
     const v = this.view;
     v.players = [];
     for (const p of g.players.values()) {
@@ -128,6 +133,7 @@ export class ClientSession extends Base {
     this.acc = 0;
     this.sendT = 0; this.pingT = 0; this.rtt = 0.05;
     this.last = null; // newest snapshot meta
+    this.lastT = -1; this.arrive = 0; this.gap = 0.05; this.dev = 0.01; this.delay = 0.12; // adaptive interpolation delay (seconds)
     this.ready = new Promise((resolve) => { this.resolveReady = resolve; });
     net.onMsg = (m) => this.onMsg(m);
     net.onClose = (why) => this.onClosed(why || 'Disconnected');
@@ -142,13 +148,25 @@ export class ClientSession extends Base {
     }
     else if (m.k === 'roster') this.setRoster(m.r);
     else if (m.k === 's') {
+      if (m.s.t < this.lastT) return; // an older snapshot overtaken on the unordered channel
+      this.lastT = m.s.t;
       const rows = new Map(m.s.p.map((r) => [r[0], parseRow(r)]));
-      this.snaps.push({ rt: performance.now(), rows });
-      if (this.snaps.length > 6) this.snaps.shift();
+      const now = performance.now();
+      if (this.arrive) { // measure how steady the snapshots arrive, and keep just enough delay to smooth that out
+        const g = (now - this.arrive) / 1000;
+        this.gap = lerp(this.gap, Math.min(g, 0.5), 0.1);
+        this.dev = lerp(this.dev, Math.abs(g - this.gap), 0.1);
+        const want = Math.max(0.09, Math.min(0.35, this.gap * 1.6 + this.dev * 3));
+        this.delay = lerp(this.delay, want, want > this.delay ? 0.3 : 0.03); // grow fast, shrink slowly
+      }
+      this.arrive = now;
+      this.snaps.push({ rt: now, rows });
+      if (this.snaps.length > 8) this.snaps.shift();
       this.last = m.s;
       if (m.e && m.e.length) this.emit(m.e);
       this.reconcile(rows.get(this.myId));
-    } else if (m.k === 'pong') this.rtt = lerp(this.rtt, (performance.now() - m.t) / 1000, 0.3);
+    } else if (m.k === 'e') { if (m.e && m.e.length) this.emit(m.e); }
+    else if (m.k === 'pong') this.rtt = lerp(this.rtt, (performance.now() - m.t) / 1000, 0.3);
   }
 
   reconcile(me) {
@@ -194,13 +212,14 @@ export class ClientSession extends Base {
     v.ping = Math.round(this.rtt * 1000);
     const n = this.snaps.length;
     if (!n) return;
-    const rt = performance.now() - 110;
+    const rt = performance.now() - this.delay * 1000;
     let a = this.snaps[0], b = this.snaps[0];
     for (let i = 0; i < n; i++) { if (this.snaps[i].rt <= rt) a = this.snaps[i]; if (this.snaps[i].rt > rt) { b = this.snaps[i]; break; } b = this.snaps[i]; }
     const t = a === b ? 1 : Math.max(0, Math.min(1, (rt - a.rt) / (b.rt - a.rt)));
+    const late = a === b ? Math.min(0.15, Math.max(0, (rt - b.rt) / 1000)) : 0; // newest snapshot is older than the delay: coast on velocity
     for (const [id, nb] of this.snaps[n - 1].rows) {
       const pa = a.rows.get(id) || nb, pb = b.rows.get(id) || nb;
-      const o = { ...nb, x: lerp(pa.x, pb.x, t), y: lerp(pa.y, pb.y, t), z: lerp(pa.z, pb.z, t), yaw: lerpAngle(pa.yaw, pb.yaw, t), pitch: lerp(pa.pitch, pb.pitch, t) };
+      const o = { ...nb, x: lerp(pa.x, pb.x, t) + (late ? pb.vx * late : 0), y: lerp(pa.y, pb.y, t) + (late ? pb.vy * late : 0), z: lerp(pa.z, pb.z, t) + (late ? pb.vz * late : 0), yaw: lerpAngle(pa.yaw, pb.yaw, t), pitch: lerp(pa.pitch, pb.pitch, t) };
       if (id === this.myId) {
         if (nb.alive) { o.x = this.pred.x; o.y = this.pred.y; o.z = this.pred.z; o.thr = this.input.jet && this.pred.fuel > 0; o.vx = this.pred.vx; o.vy = this.pred.vy; o.vz = this.pred.vz; o.gr = this.pred.ground; }
         o.yaw = this.input.yaw; o.pitch = this.input.pitch;

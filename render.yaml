@@ -3,6 +3,7 @@ services:
   - type: web
     name: jet-arena
     runtime: node
+    region: singapore # closest to Bangladesh: lowest ping
     plan: free
     buildCommand: npm install && npm run build
     startCommand: npm start

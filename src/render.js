@@ -32,6 +32,7 @@ export class Renderer {
     this.shake = 0;
     this.kick = 0;
     this.camPos = new THREE.Vector3();
+    this.scaleMul = 1; this.fpsAvg = 60;
     this.buildWorld();
     this.initPuffs();
     this.mons = new MonsterViews(this);
@@ -49,12 +50,28 @@ export class Renderer {
       for (const sc of [this.scene, this.vmScene]) sc && sc.traverse((o) => { const m = o.material; if (m) (Array.isArray(m) ? m : [m]).forEach((x) => { x.needsUpdate = true; }); });
     }
     this.realShadows = shadows;
+    this.gl.shadowMap.autoUpdate = false; this.gl.shadowMap.needsUpdate = true; // we decide when the shadow map redraws (see render)
     for (const w of Object.values(this.worlds || {})) w.res && w.res.setQuality && w.res.setQuality(q);
     this.resize();
   }
 
+  // Keeps the game smooth on its own: if the frame rate stays low, render at a lower resolution (and as a last
+  // resort drop a graphics tier); when there is plenty of headroom, creep back up. `dt` is the real frame time.
+  adapt(dt) {
+    if (!(dt > 0)) return;
+    this.fpsAvg = (this.fpsAvg || 60) + (1 / dt - (this.fpsAvg || 60)) * 0.05;
+    if (this.fpsAvg < 38) { this.slowT = (this.slowT || 0) + dt; this.fastT = 0; }
+    else if (this.fpsAvg > 56) { this.fastT = (this.fastT || 0) + dt; this.slowT = 0; }
+    else { this.slowT = 0; this.fastT = 0; }
+    if (this.slowT > 2.5) {
+      this.slowT = 0;
+      if (this.scaleMul > 0.55) { this.scaleMul = Math.max(0.5, this.scaleMul - 0.1); this.resize(); }
+      else if (this.quality > 0 && performance.now() - (this.lastDrop || 0) > 12000) { this.lastDrop = performance.now(); this.scaleMul = 0.8; this.onAutoQuality && this.onAutoQuality(this.quality - 1); }
+    } else if (this.fastT > 8 && this.scaleMul < 1) { this.fastT = 0; this.scaleMul = Math.min(1, this.scaleMul + 0.05); this.resize(); }
+  }
+
   resize() {
-    const dpr = [0.55, 0.8, Math.min(devicePixelRatio || 1, 2), Math.min(devicePixelRatio || 1, 2.5)][this.quality];
+    const dpr = [0.55, 0.8, Math.min(devicePixelRatio || 1, 2), Math.min(devicePixelRatio || 1, 2.5)][this.quality] * this.scaleMul;
     this.gl.setPixelRatio(dpr);
     this.gl.setSize(innerWidth, innerHeight, false);
     this.cam.aspect = innerWidth / innerHeight;
@@ -290,6 +307,7 @@ export class Renderer {
     this.world.update(this.cam.position, dt, view.sv);
     this.mons.update(view.sv, dt);
     this.gl.clear();
+    if (this.realShadows) { this.sfN = (this.sfN || 0) + 1; if (this.quality >= 3 || this.sfN % 2 === 0) this.gl.shadowMap.needsUpdate = true; } // High redraws shadows every 2nd frame
     this.gl.render(this.scene, this.cam);
     if (this.vm.visible) { this.gl.clearDepth(); this.gl.render(this.vmScene, this.vmCam); }
   }
