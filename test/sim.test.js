@@ -290,4 +290,50 @@ ok('first-person flag: bullets leave the eye and hit what is dead ahead, even po
   }
 });
 
+
+// ---- lag compensation: the shooter sees a moving target where it was a moment ago
+function lagShot(lag) {
+  const g = new Game({ rng: seeded(5), scoreLimit: 999, timeLimit: 99999 });
+  const a = g.addPlayer('A'), v = g.addPlayer('V');
+  const pa = g.players.get(a), pv = g.players.get(v);
+  pa.weapon = 3; pa.mags[3] = 99; pa.reloadLeft = 0; pa.respawnAt = pv.respawnAt = 1e9;
+  const place = () => { pa.body.x = 4.5; pa.body.y = 0; pa.body.z = 28; pa.body.vx = pa.body.vz = 0; pa.body.ground = true; pa.cool = 0; pa.bloom = 0; };
+  pv.body.x = -6; pv.body.y = 0; pv.body.z = -27; pv.body.ground = true;
+  pv.inp.mx = 1; pv.inp.mz = 0; pv.inp.yaw = 0; // runs sideways at a steady pace
+  const seen = []; // where the target was, tick by tick
+  let hit = false, moved = 0;
+  for (let i = 0; i < 90; i++) {
+    place(); pv.body.z = -27; pv.hp = 100; pv.alive = true;
+    pa.inp.fire = false;
+    g.advance(TICK);
+    seen.push({ t: g.time, x: pv.body.x, z: pv.body.z });
+    g.drainEvents();
+    if (i === 60) { // the shooter aims at the spot the target was at `lag` seconds ago, which is what its screen shows
+      const old = seen.reduce((best, e) => (Math.abs(e.t - (g.time - 0.3)) < Math.abs(best.t - (g.time - 0.3)) ? e : best));
+      const dx = old.x - pa.body.x, dz = old.z - pa.body.z, dy = 0.9 - 1.6;
+      const len = Math.hypot(dx, dy, dz);
+      Object.assign(pa.inp, { yaw: Math.atan2(-dx, -dz), pitch: Math.asin(dy / len), ads: true, fp: true, lag });
+      pa.inp.fire = true; place();
+      moved = pv.body.x - old.x;
+      g.advance(TICK);
+      for (const e of g.drainEvents()) if (e[0] === 'h' && e[2] === a) hit = true;
+      break;
+    }
+  }
+  return { hit, moved };
+}
+ok('lag compensation: a shot at where the target was seen (0.3 s ago) hits, and without it misses', () => {
+  const withLag = lagShot(0.3), without = lagShot(0);
+  console.log('   target had moved ' + withLag.moved.toFixed(2) + ' m since the shooter saw it; with comp: ' + (withLag.hit ? 'HIT' : 'miss') + ', without: ' + (without.hit ? 'HIT' : 'miss'));
+  assert.ok(withLag.moved > 0.8, 'target barely moved: ' + withLag.moved);
+  assert.equal(withLag.hit, true); assert.equal(without.hit, false);
+});
+ok('lag compensation is capped (a huge claimed lag cannot reach back more than 0.4 s)', () => {
+  const g = new Game({ rng: seeded(2) });
+  const a = g.addPlayer('A'); g.setInput(a, { lag: 99 });
+  assert.equal(g.players.get(a).inp.lag, 0.4);
+  g.setInput(a, { lag: -5 }); assert.equal(g.players.get(a).inp.lag, 0);
+  g.setInput(a, { lag: NaN }); assert.equal(g.players.get(a).inp.lag, 0);
+});
+
 console.log('\n' + n + ' sim tests passed');

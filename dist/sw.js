@@ -1,5 +1,5 @@
 // Caches the whole game on first visit so it starts with no internet (needed for hotspot play).
-const CACHE = 'jet-arena-mwq8gayk';
+const CACHE = 'jet-arena-mwqj2nt0';
 const FILES = ["./","./app.js","./icon-180.png","./icon-192.png","./icon-512.png","./index.html","./manifest.webmanifest","./rahman-logo.png"];
 
 self.addEventListener('install', (e) => {

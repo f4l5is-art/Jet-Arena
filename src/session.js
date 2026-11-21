@@ -203,7 +203,7 @@ export class ClientSession extends Base {
     this.sendT += dt; this.pingT += dt;
     if (this.sendT >= 1 / 70) { // inputs go out every frame: less delay before the server hears you
       this.sendT = 0;
-      this.net.send({ k: 'in', i: { ...this.input, rl: this.latched.rl, sw: this.latched.sw, jump: this.latched.jump } });
+      this.net.send({ k: 'in', i: { ...this.input, lag: Math.min(0.4, (this.view.ping || 0) / 1000 + this.delay), rl: this.latched.rl, sw: this.latched.sw, jump: this.latched.jump } });
       this.latched.rl = false; this.latched.sw = -1; this.latched.jump = false;
     }
     if (this.pingT >= 1) { this.pingT = 0; this.net.send({ k: 'ping', t: performance.now() }); }

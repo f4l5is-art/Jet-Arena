@@ -21,6 +21,7 @@ export class Game {
     this.players = new Map();
     this.events = [];
     this.time = 0;
+    this.hist = []; // recent positions of every player, so a shot can be checked against what the shooter was actually seeing
     this.acc = 0;
     this.nextId = 1;
     this.matchStart = 0;
@@ -38,7 +39,7 @@ export class Game {
       body: newBody(), yaw: 0, pitch: 0, hp: HP_MAX, alive: false, respawnAt: 0,
       weapon: 1, mags: WEAPONS.map((w) => w.mag), cool: 0, reloadLeft: 0, lastHit: -99,
       kills: 0, deaths: 0, wantFire: false, fireHeld: false, bloom: 0, cans: 0,
-      inp: { mx: 0, mz: 0, yaw: 0, pitch: 0, jet: false, fire: false, rl: false, sw: -1, jump: false, ads: false, spd: 1, fp: false },
+      inp: { mx: 0, mz: 0, yaw: 0, pitch: 0, jet: false, fire: false, rl: false, sw: -1, jump: false, ads: false, spd: 1, fp: false, lag: 0 },
       ai: bot ? { target: 0, think: 0, strafe: 1, strafeT: 0, stuckT: 0, lx: 0, lz: 0, wp: null } : null,
     };
     this.players.set(id, p);
@@ -59,6 +60,7 @@ export class Game {
     n.mx = c(i.mx, -1, 1); n.mz = c(i.mz, -1, 1);
     n.yaw = Number.isFinite(i.yaw) ? i.yaw : n.yaw;
     n.pitch = c(i.pitch, -1.4, 1.4);
+    n.lag = c(i.lag, 0, 0.4); // how far behind the shooter's screen is (round trip + interpolation delay), capped so it can't be abused
     n.jet = !!i.jet; n.fire = !!i.fire; n.ads = !!i.ads; n.fp = !!i.fp;
     if (i.rl) n.rl = true; // one-shot flags stay latched until consumed
     if (i.jump) n.jump = true;
@@ -101,6 +103,12 @@ export class Game {
 
   tick() {
     this.time += TICK;
+    if (this.players.size > 1) {
+      const pose = new Map();
+      for (const o of this.players.values()) if (o.alive) pose.set(o.id, [o.body.x, o.body.y, o.body.z]);
+      this.hist.push({ t: this.time, p: pose });
+      while (this.hist.length > 1 && this.hist[0].t < this.time - 0.6) this.hist.shift();
+    }
     if (this.over) {
       if (this.time >= this.restartAt) this.resetMatch();
       return;
@@ -152,13 +160,37 @@ export class Game {
     if (p.mags[p.weapon] <= 0) this.startReload(p);
   }
 
+  // Positions at an earlier moment: returns a function id -> [x, y, z] (blended between the two recorded ticks around t).
+  rewindTo(t) {
+    const h = this.hist;
+    if (h.length < 2) return null;
+    if (t <= h[0].t) { const q = h[0].p; return (id) => q.get(id) || null; }
+    let i = h.length - 1;
+    while (i > 0 && h[i - 1].t > t) i--;
+    const a = h[i - 1], b = h[i], f = Math.min(1, Math.max(0, (t - a.t) / (b.t - a.t)));
+    return (id) => {
+      const pa = a.p.get(id), pb = b.p.get(id);
+      if (!pa) return null;
+      if (!pb) return pa;
+      return [pa[0] + (pb[0] - pa[0]) * f, pa[1] + (pb[1] - pa[1]) * f, pa[2] + (pb[2] - pa[2]) * f];
+    };
+  }
+
   shoot(p, w) {
     const b = p.body;
     const ex = b.x, ey = b.y + EYE, ez = b.z;
     const list = [];
     // survival is co-op: shots only ever hit monsters
     if (this.surv) for (const m of this.surv.mons) list.push(monTarget(m));
-    else for (const o of this.players.values()) if (o.alive) list.push({ id: o.id, x: o.body.x, y: o.body.y, z: o.body.z, alive: true });
+    else {
+      // Lag compensation: a remote player sees everyone slightly in the past, so hit-test against where the others were then.
+      const back = !p.bot && p.inp.lag > 0.01 ? this.rewindTo(this.time - p.inp.lag) : null;
+      for (const o of this.players.values()) {
+        if (!o.alive) continue;
+        const old = back && o.id !== p.id ? back(o.id) : null;
+        list.push(old ? { id: o.id, x: old[0], y: old[1], z: old[2], alive: true } : { id: o.id, x: o.body.x, y: o.body.y, z: o.body.z, alive: true });
+      }
+    }
     // Camera model: scoped sniper and bots aim straight from the eye; everyone else aims through the
     // third-person camera (aimShot makes the bullet land exactly where the crosshair points).
     const scoped = p.weapon === SNIPER && p.inp.ads;
