@@ -389,11 +389,25 @@ $('hj-back').onclick = () => { stopScan(); closeCamera(); show('s-hot'); };
 // ------------------------------------------------------------------ effects
 const feed = $('feed');
 function nameOf(id) { const r = session && session.roster.get(id); return r ? r.name : '?'; }
+// When you are not the host, the server confirms each of your shots a moment later. Show the muzzle flash, sound and
+// kick right away, and then ignore the server's echo of that shot, so shooting feels instant.
+const predicted = []; let pShotAt = 0, pHeld = false;
+function predictShot(inp, me, w, now) {
+  const pressed = inp.fire && !pHeld; pHeld = inp.fire;
+  if (!session || session.isHost || !inp.fire || !me || !me.alive || me.reload > 0 || me.ammo <= 0 || session.view.over) return;
+  if (!w.auto && !pressed) return;
+  if (now / 1000 - pShotAt < w.rate * 1.02) return;
+  pShotAt = now / 1000;
+  predicted.push(now);
+  renderer.shot(session.myId); sfx.shot(me.weapon, true); renderer.kick = 0.012;
+}
 function onEvent(e) {
   const me = session ? session.myId : 0;
   const v = session.view;
   if (e[0] === 's') {
     renderer.tracer(e[2], e[3], e[4], e[5], e[6], e[7]);
+    while (predicted.length && performance.now() - predicted[0] > 1500) predicted.shift(); // a predicted shot the server never confirmed
+    if (e[1] === me && predicted.length) { predicted.shift(); return; } // already shown instantly
     renderer.shot(e[1]);
     const sh = v.players.find((p) => p.id === e[1]);
     const near = e[1] === me;
@@ -543,6 +557,7 @@ function frame(now) {
           && (cur !== SNIPER || (scoped && spread < 0.005))) {
         inp.fire = w.auto || Math.floor(now / 110) % 2 === 0;
       }
+      predictShot(inp, me, w, now);
       session.setLocalInput(inp);
       crosshair(spread, renderer.fov, locked, scoped, ads, cur);
     }

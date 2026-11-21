@@ -15,6 +15,8 @@ function parseRow(r) {
   };
 }
 
+const SNAP_DT = 1 / 30; // the match is sent to everyone 30 times a second
+
 class Base {
   constructor() {
     this.fx = []; // listeners for events: ['s', ...] shots, ['h', ...] hits, ['k', ...] kills
@@ -96,8 +98,8 @@ export class HostSession extends Base {
     const ev = g.drainEvents();
     if (ev.length) { this.emit(ev); this.pending.push(...ev); }
     this.sinceSnap += dt;
-    if (this.net && this.sinceSnap >= 0.05) {
-      this.sinceSnap = this.sinceSnap > 0.1 ? 0 : this.sinceSnap - 0.05; // carry the remainder so the rate stays a steady 20/s
+    if (this.net && this.sinceSnap >= SNAP_DT) {
+      this.sinceSnap = this.sinceSnap > 0.1 ? 0 : this.sinceSnap - SNAP_DT; // carry the remainder so the rate stays steady
       (this.net.broadcastFast || this.net.broadcast).call(this.net, { k: 's', s: g.snapshot() });
       if (this.pending.length) { this.net.broadcast({ k: 'e', e: this.pending }); this.pending = []; }
     }
@@ -133,7 +135,7 @@ export class ClientSession extends Base {
     this.acc = 0;
     this.sendT = 0; this.pingT = 0; this.rtt = 0.05;
     this.last = null; // newest snapshot meta
-    this.lastT = -1; this.arrive = 0; this.gap = 0.05; this.dev = 0.01; this.delay = 0.12; // adaptive interpolation delay (seconds)
+    this.lastT = -1; this.arrive = 0; this.gap = SNAP_DT; this.dev = 0.01; this.delay = 0.12; // adaptive interpolation delay (seconds)
     this.ready = new Promise((resolve) => { this.resolveReady = resolve; });
     net.onMsg = (m) => this.onMsg(m);
     net.onClose = (why) => this.onClosed(why || 'Disconnected');
@@ -199,7 +201,7 @@ export class ClientSession extends Base {
     while (this.acc >= TICK) { this.acc -= TICK; if (this.predAlive) moveStep(this.pred, this.input, TICK); }
 
     this.sendT += dt; this.pingT += dt;
-    if (this.sendT >= 1 / 30) {
+    if (this.sendT >= 1 / 70) { // inputs go out every frame: less delay before the server hears you
       this.sendT = 0;
       this.net.send({ k: 'in', i: { ...this.input, rl: this.latched.rl, sw: this.latched.sw, jump: this.latched.jump } });
       this.latched.rl = false; this.latched.sw = -1; this.latched.jump = false;

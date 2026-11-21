@@ -52,7 +52,7 @@ const code = joinedA.code;
 await alice.wait((m) => m.t === 'd' && m.d.k === 's');
 const s0 = alice.snaps; await sleep(1000);
 const rate = alice.snaps - s0;
-assert.ok(rate >= 14 && rate <= 26, 'snapshot rate was ' + rate); ok(`server streams snapshots (~${rate}/s)`);
+assert.ok(rate >= 25 && rate <= 36, 'snapshot rate was ' + rate); ok(`server streams snapshots (~${rate}/s)`);
 
 // bots really are being simulated by the server (they move)
 const pos = (snap, id) => snap.d.s.p.find((p) => p[0] === id);

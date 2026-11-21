@@ -7,7 +7,7 @@ cpSync('public', 'dist', { recursive: true });
 await build({
   entryPoints: ['src/main.js'],
   bundle: true,
-  minify: true,
+  minify: !process.env.NOMIN,
   format: 'esm',
   target: ['es2020'],
   outfile: 'dist/app.js',

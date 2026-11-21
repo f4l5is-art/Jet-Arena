@@ -31,7 +31,7 @@ export class Renderer {
     this.tracers = [];
     this.shake = 0;
     this.kick = 0;
-    this.camPos = new THREE.Vector3();
+    this.camPos = new THREE.Vector3(); this.lodCam = this.cam.position; // players far from this are drawn with less detail work
     this.scaleMul = 1; this.fpsAvg = 60;
     this.buildWorld();
     this.initPuffs();

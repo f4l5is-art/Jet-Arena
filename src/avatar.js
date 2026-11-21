@@ -18,12 +18,33 @@ const flashMat = new THREE.MeshBasicMaterial({ color: 0xfff0a0 });
 const shadowGeo = new THREE.CircleGeometry(0.55, 14);
 const shadowMat = new THREE.MeshBasicMaterial({ color: 0x000000, transparent: true, opacity: 0.3, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -4, polygonOffsetUnits: -4 });
 
+
+// Several boxes that move as one rigid piece become a single mesh (colours baked in), so a player costs fewer draw calls.
+function mergeParts(parts) {
+  const pos = [], nor = [], col = [], idx = [], c = new THREE.Color();
+  let base = 0;
+  for (const [g, hex, x, y, z] of parts) {
+    c.set(hex);
+    const P = g.attributes.position, N = g.attributes.normal;
+    for (let i = 0; i < P.count; i++) { pos.push(P.getX(i) + x, P.getY(i) + y, P.getZ(i) + z); nor.push(N.getX(i), N.getY(i), N.getZ(i)); col.push(c.r, c.g, c.b); }
+    for (let i = 0; i < g.index.count; i++) idx.push(g.index.getX(i) + base);
+    base += P.count;
+  }
+  const out = new THREE.BufferGeometry();
+  out.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  out.setAttribute('normal', new THREE.Float32BufferAttribute(nor, 3));
+  out.setAttribute('color', new THREE.Float32BufferAttribute(col, 3));
+  out.setIndex(idx);
+  return out;
+}
+
 export class Avatar {
   constructor(r, p) {
     this.r = r; // renderer: scene, makeTag, puff, callbacks
     this.name = p.name;
     const M = (c) => new THREE.MeshLambertMaterial({ color: c, flatShading: true });
     this.mShirt = M(p.color); this.mPants = M(0x2c3550); this.mSkin = M(0xf0c8a0);
+    this.mBody = new THREE.MeshLambertMaterial({ vertexColors: true, flatShading: true });
     const dark = M(0x2b2f3a), gear = M(0x4a5163), visor = new THREE.MeshBasicMaterial({ color: 0x6fd3ff });
     const add = (parent, geo, mat, x, y, z) => { const m = new THREE.Mesh(geo, mat); m.position.set(x, y, z); parent.add(m); return m; };
     const group = (parent, x, y, z) => { const g = new THREE.Group(); g.position.set(x, y, z); parent.add(g); return g; };
@@ -32,29 +53,26 @@ export class Avatar {
     this.root.rotation.order = 'YXZ';
     this.hips = group(this.root, 0, 0.82, 0);
     add(this.hips, box(0.5, 0.18, 0.3), this.mPants, 0, 0.02, 0);
+    const KNEE = mergeParts([[box(0.19, 0.38, 0.21), 0x2c3550, 0, -0.19, 0], [box(0.21, 0.1, 0.32), 0x2b2f3a, 0, -0.36, -0.05]]);
     const leg = (x) => {
       const thigh = group(this.hips, x, 0, 0);
       add(thigh, box(0.21, 0.42, 0.23), this.mPants, 0, -0.21, 0);
       const knee = group(thigh, 0, -0.42, 0);
-      add(knee, box(0.19, 0.38, 0.21), this.mPants, 0, -0.19, 0);
-      add(knee, box(0.21, 0.1, 0.32), dark, 0, -0.36, -0.05); // boot
+      add(knee, KNEE, this.mBody, 0, 0, 0); // shin + boot
       return { thigh, knee };
     };
     this.legL = leg(-0.14); this.legR = leg(0.14);
 
     this.torso = group(this.hips, 0, 0.06, 0);
-    add(this.torso, box(0.6, 0.58, 0.32), this.mShirt, 0, 0.33, 0);
-    add(this.torso, box(0.64, 0.16, 0.34), gear, 0, 0.5, 0); // chest rig
-    add(this.torso, box(0.36, 0.5, 0.2), dark, 0, 0.38, 0.26); // jetpack
-    add(this.torso, box(0.1, 0.12, 0.1), gear, -0.1, 0.08, 0.26);
-    add(this.torso, box(0.1, 0.12, 0.1), gear, 0.1, 0.08, 0.26);
+    add(this.torso, mergeParts([ // shirt, chest rig, jetpack and its two nozzles: one mesh
+      [box(0.6, 0.58, 0.32), p.color, 0, 0.33, 0], [box(0.64, 0.16, 0.34), 0x4a5163, 0, 0.5, 0], [box(0.36, 0.5, 0.2), 0x2b2f3a, 0, 0.38, 0.26],
+      [box(0.1, 0.12, 0.1), 0x4a5163, -0.1, 0.08, 0.26], [box(0.1, 0.12, 0.1), 0x4a5163, 0.1, 0.08, 0.26]]), this.mBody, 0, 0, 0);
     this.flames = [-0.1, 0.1].map((x) => {
       const f = new THREE.Mesh(flameGeo, flameMat);
       f.rotation.x = Math.PI; f.position.set(x, -0.2, 0.26); f.visible = false; this.torso.add(f); return f;
     });
     this.head = group(this.torso, 0, 0.64, 0);
-    add(this.head, box(0.3, 0.3, 0.3), this.mSkin, 0, 0.15, 0);
-    add(this.head, box(0.34, 0.14, 0.34), dark, 0, 0.3, 0); // helmet
+    add(this.head, mergeParts([[box(0.3, 0.3, 0.3), 0xf0c8a0, 0, 0.15, 0], [box(0.34, 0.14, 0.34), 0x2b2f3a, 0, 0.3, 0]]), this.mBody, 0, 0, 0); // head + helmet
     add(this.head, box(0.28, 0.07, 0.04), visor, 0, 0.19, -0.16);
 
     this.aim = group(this.torso, 0, 0.5, 0); // shoulder height; rotates to the aim pitch
@@ -108,17 +126,27 @@ export class Avatar {
     this.tag.visible = !isMe && p.alive;
 
     // soft blob shadow on whatever is below (ground, crate, platform)
-    const down = rayWorld(p.x, p.y + 0.5, p.z, 0, -1, 0, 40);
-    const surface = p.y + 0.5 - down, h = Math.max(0, p.y - surface);
-    this.shadow.position.set(p.x, surface + 0.04, p.z);
-    this.shadow.scale.setScalar(1 - Math.min(0.5, h * 0.05));
-    shadowMat.opacity = 0.3;
-    this.shadow.visible = (p.alive || this.deadT < 2.2) && !r.realShadows; // the blob is only for when there are no real shadows
+    if (r.realShadows) this.shadow.visible = false; // real sun shadows: no blob, and no ray to find the floor under it
+    else {
+      const down = rayWorld(p.x, p.y + 0.5, p.z, 0, -1, 0, 40);
+      const surface = p.y + 0.5 - down, h = Math.max(0, p.y - surface);
+      this.shadow.position.set(p.x, surface + 0.04, p.z);
+      this.shadow.scale.setScalar(1 - Math.min(0.5, h * 0.05));
+      shadowMat.opacity = 0.3;
+      this.shadow.visible = p.alive || this.deadT < 2.2;
+    }
+
+    // Far-away players: animate every other frame (nobody can see the difference) and drop the name tag.
+    if (!isMe && p.alive && r.lodCam) {
+      const cx = p.x - r.lodCam.x, cz = p.z - r.lodCam.z, far = cx * cx + cz * cz > 38 * 38;
+      this.tag.visible = !far;
+      if (far) { this.lodSkip = !this.lodSkip; this.lodDt = (this.lodDt || 0) + dt; if (this.lodSkip) return; dt = this.lodDt; this.lodDt = 0; }
+    }
 
     // hit flash
     this.flash = Math.max(0, this.flash - dt);
     const f = this.flash / 0.14;
-    for (const m of [this.mShirt, this.mPants, this.mSkin]) m.emissive.setRGB(f * 0.9, f * 0.05, f * 0.05);
+    if (f > 0 || this.flashOn) { this.flashOn = f > 0; for (const m of [this.mShirt, this.mPants, this.mSkin, this.mBody]) m.emissive.setRGB(f * 0.9, f * 0.05, f * 0.05); }
 
     if (!p.alive) {
       // fall over backwards, lie there, then disappear a moment before respawn
