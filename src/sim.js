@@ -39,7 +39,7 @@ export class Game {
       body: newBody(), yaw: 0, pitch: 0, hp: HP_MAX, alive: false, respawnAt: 0,
       weapon: 1, mags: WEAPONS.map((w) => w.mag), cool: 0, reloadLeft: 0, lastHit: -99,
       kills: 0, deaths: 0, wantFire: false, fireHeld: false, bloom: 0, cans: 0,
-      inp: { mx: 0, mz: 0, yaw: 0, pitch: 0, jet: false, fire: false, rl: false, sw: -1, jump: false, ads: false, spd: 1, fp: false, lag: 0 },
+      inp: { mx: 0, mz: 0, yaw: 0, pitch: 0, jet: false, fire: false, rl: false, sw: -1, jump: false, ads: false, spd: 1, fp: false, lag: 0, ct: 0, ctAt: 0 },
       ai: bot ? { target: 0, think: 0, strafe: 1, strafeT: 0, stuckT: 0, lx: 0, lz: 0, wp: null } : null,
     };
     this.players.set(id, p);
@@ -60,6 +60,7 @@ export class Game {
     n.mx = c(i.mx, -1, 1); n.mz = c(i.mz, -1, 1);
     n.yaw = Number.isFinite(i.yaw) ? i.yaw : n.yaw;
     n.pitch = c(i.pitch, -1.4, 1.4);
+    if (Number.isFinite(i.ct)) { n.ct = i.ct; n.ctAt = this.time; } // the client's clock stamp; echoed back in snapshots so it can reconcile exactly
     n.lag = c(i.lag, 0, 0.4); // how far behind the shooter's screen is (round trip + interpolation delay), capped so it can't be abused
     n.jet = !!i.jet; n.fire = !!i.fire; n.ads = !!i.ads; n.fp = !!i.fp;
     if (i.rl) n.rl = true; // one-shot flags stay latched until consumed
@@ -260,6 +261,8 @@ export class Game {
         p.mags[p.weapon], Math.round(p.body.fuel), p.kills, p.deaths, r2(p.reloadLeft),
         r2(p.body.vx), r2(p.body.vy), r2(p.body.vz), p.body.ground ? 1 : 0, Math.round(p.bloom * 10000) / 10000, p.cans,
       ]),
+      // for each remote player: which of its inputs this snapshot already includes, and how long ago (ms) that input arrived
+      ak: [...this.players.values()].filter((p) => p.inp.ct).map((p) => [p.id, p.inp.ct, Math.min(500, Math.round((this.time - p.inp.ctAt) * 1000))]),
       sv: this.surv ? this.surv.snap() : undefined,
     };
   }

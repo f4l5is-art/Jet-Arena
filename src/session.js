@@ -130,6 +130,7 @@ export class ClientSession extends Base {
     this.snaps = []; // { rt, rows: Map }
     this.pred = newBody();
     this.predAlive = false;
+    this.ph = []; // our own predicted positions over the last ~1.5 s, to compare with what the server says about the same moment
     this.input = { mx: 0, mz: 0, yaw: 0, pitch: 0, jet: false, fire: false, rl: false, sw: -1 };
     this.latched = { rl: false, sw: -1, jump: false };
     this.acc = 0;
@@ -166,22 +167,40 @@ export class ClientSession extends Base {
       if (this.snaps.length > 8) this.snaps.shift();
       this.last = m.s;
       if (m.e && m.e.length) this.emit(m.e);
-      this.reconcile(rows.get(this.myId));
+      this.reconcile(rows.get(this.myId), (m.s.ak || []).find((a) => a[0] === this.myId));
     } else if (m.k === 'e') { if (m.e && m.e.length) this.emit(m.e); }
     else if (m.k === 'pong') this.rtt = lerp(this.rtt, (performance.now() - m.t) / 1000, 0.3);
   }
 
-  reconcile(me) {
+  // Where we were (predicted) at client time T ms, blended between the two recorded frames around it.
+  phAt(T) {
+    const h = this.ph;
+    if (!h.length || T < h[0].t) return null;
+    let i = h.length - 1;
+    if (T >= h[i].t) return h[i];
+    while (i > 0 && h[i - 1].t > T) i--;
+    const a = h[i - 1], c = h[i], f = (T - a.t) / (c.t - a.t || 1);
+    return { x: a.x + (c.x - a.x) * f, y: a.y + (c.y - a.y) * f, z: a.z + (c.z - a.z) * f };
+  }
+
+  // The snapshot says where the server had us after applying our input stamped `ack[1]` (plus ack[2] ms of holding it).
+  // We compare it with where WE were at that same moment, so network delay cancels out and standing still or stopping
+  // produces no error. Only a real difference (a hit shoving us, a wall) is eased in, by shifting the whole prediction.
+  reconcile(me, ack) {
     if (!me) return;
     const b = this.pred;
-    if (!me.alive || !this.predAlive || Math.hypot(me.x - b.x, me.y - b.y, me.z - b.z) > 2.5) {
+    const ref = ack ? this.phAt(ack[1] + ack[2]) : null;
+    const err = ref ? Math.hypot(me.x - ref.x, me.y - ref.y, me.z - ref.z) : Math.hypot(me.x - b.x, me.y - b.y, me.z - b.z);
+    if (!me.alive || !this.predAlive || err > 2.5 || (!ref && err > 6)) {
       Object.assign(b, { x: me.x, y: me.y, z: me.z, vx: me.vx, vy: me.vy, vz: me.vz, fuel: me.fuel });
+      this.ph.length = 0;
     } else {
-      // Pull towards where the server says we are, pushed forward by the network delay.
-      const lat = this.rtt / 2 + 0.03;
-      b.x = lerp(b.x, me.x + me.vx * lat, 0.12);
-      b.y = lerp(b.y, me.y + me.vy * lat, 0.12);
-      b.z = lerp(b.z, me.z + me.vz * lat, 0.12);
+      if (ref && err > 0.04) { // 4 cm is just the server's rounding
+        const k = err > 0.6 ? 0.5 : 0.25;
+        const dx = (me.x - ref.x) * k, dy = (me.y - ref.y) * k, dz = (me.z - ref.z) * k;
+        b.x += dx; b.y += dy; b.z += dz;
+        for (const e of this.ph) { e.x += dx; e.y += dy; e.z += dz; }
+      }
       b.fuel = me.fuel;
     }
     this.predAlive = me.alive;
@@ -200,10 +219,15 @@ export class ClientSession extends Base {
     this.acc += Math.min(dt, 0.25);
     while (this.acc >= TICK) { this.acc -= TICK; if (this.predAlive) moveStep(this.pred, this.input, TICK); }
 
+    if (this.predAlive) {
+      const nowMs = performance.now(), h = this.ph;
+      h.push({ t: nowMs, x: this.pred.x, y: this.pred.y, z: this.pred.z });
+      while (h.length > 2 && h[0].t < nowMs - 1500) h.shift();
+    }
     this.sendT += dt; this.pingT += dt;
     if (this.sendT >= 1 / 70) { // inputs go out every frame: less delay before the server hears you
       this.sendT = 0;
-      this.net.send({ k: 'in', i: { ...this.input, lag: Math.min(0.4, (this.view.ping || 0) / 1000 + this.delay), rl: this.latched.rl, sw: this.latched.sw, jump: this.latched.jump } });
+      this.net.send({ k: 'in', i: { ...this.input, ct: performance.now(), lag: Math.min(0.4, (this.view.ping || 0) / 1000 + this.delay), rl: this.latched.rl, sw: this.latched.sw, jump: this.latched.jump } });
       this.latched.rl = false; this.latched.sw = -1; this.latched.jump = false;
     }
     if (this.pingT >= 1) { this.pingT = 0; this.net.send({ k: 'ping', t: performance.now() }); }
